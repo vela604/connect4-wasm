@@ -539,7 +539,7 @@ void UCI::run() {
     std::cout << "\n  Goodbye!\n";
 }
 // ───────────────────────────────────────────────────────────────────
-//  EMSCRIPTEN GLUE CODE: Isse apne uci.cpp ke sabse last mein jodein
+//  NAYA EMSCRIPTEN GLUE CODE: Isse purane glue code ki jagah replace karein
 // ───────────────────────────────────────────────────────────────────
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -556,14 +556,14 @@ extern "C" {
 
         std::string line(cmd_cstr);
         
-        // Newlines aur trailing spaces clean karne ke liye
+        // Trim spaces aur newlines
         while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\n')) {
             line.pop_back();
         }
 
         if (line.empty()) return;
 
-        // Aapke original commands par redirect
+        // Direct Core Functions mapping bina main run() loop ko block kiye
         if (line == "uci") {
             g_wasm_uci_instance->cmd_uci();
         } else if (line == "isready") {
