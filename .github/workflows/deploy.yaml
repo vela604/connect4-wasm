@@ -3,7 +3,7 @@ name: Build and Deploy Connect4 Wasm Engine
 on:
   push:
     branches:
-      - main  # Agar aapki branch ka naam 'master' hai toh yahan master kar dena
+      - main  # Agar aapki branch 'master' hai toh yahan master kar dena
 
 permissions:
   contents: read
@@ -28,7 +28,7 @@ jobs:
       - name: Setup Emscripten SDK
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: 3.1.64 # Stable pinned version for reliable compilation
+          version: 3.1.64
 
       - name: Verify Emcc Installation
         run: emcc -v
@@ -39,7 +39,8 @@ jobs:
             -s WASM=1 \
             -s USE_PTHREADS=1 \
             -s PTHREAD_POOL_SIZE=4 \
-            -s EXPORTED_FUNCTIONS='["_sendUciCommand"]' \
+            -s EXPORTED_RUNTIME_METHODS='["stringToUTF8", "lengthBytesUTF8"]' \
+            -s EXPORTED_FUNCTIONS='["_sendUciCommand", "_malloc", "_free"]' \
             --no-entry \
             -o engine.js
 
@@ -49,7 +50,7 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: '.' # Pure project folder ko single site assets ki tarah upload karega
+          path: '.'
 
       - name: Deploy to GitHub Pages
         id: deployment

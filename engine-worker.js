@@ -17,22 +17,22 @@ importScripts('engine.js');
 let isSearching = false;
 let startTime = 0;
 
-// Pure JS method - Kisi Emscripten utility function par depend nahi karta!
+// Official Emscripten String Converter Method
 function sendStringCommand(cmdStr) {
-    if (typeof self.Module.stringToUTF8Array === 'function') {
-        const buffer = [];
-        self.Module.stringToUTF8Array(cmdStr, buffer, 0, cmdStr.length * 4 + 4);
-        
-        const ptr = self.Module._stackAlloc(buffer.length);
-        self.Module.HEAPU8.set(buffer, ptr);
-        
-        if (typeof self.Module._sendUciCommand === 'function') {
-            self.Module._sendUciCommand(ptr);
-        } else if (typeof _sendUciCommand === 'function') {
-            _sendUciCommand(ptr);
-        }
+    const stringToUTF8Fn = self.stringToUTF8 || (self.Module && self.Module.stringToUTF8);
+    const lengthBytesUTF8Fn = self.lengthBytesUTF8 || (self.Module && self.Module.lengthBytesUTF8);
+    const mallocFn = self._malloc || (self.Module && self.Module._malloc);
+    const freeFn = self._free || (self.Module && self.Module._free);
+    const sendUciFn = self._sendUciCommand || (self.Module && self.Module._sendUciCommand);
+
+    if (typeof stringToUTF8Fn === 'function' && typeof sendUciFn === 'function') {
+        const length = lengthBytesUTF8Fn(cmdStr) + 1;
+        const ptr = mallocFn(length);
+        stringToUTF8Fn(cmdStr, ptr, length);
+        sendUciFn(ptr);
+        freeFn(ptr);
     } else {
-        console.error("Wasm String converter ready nahi hai.");
+        console.error("Critical Emscripten methods are missing from environment.");
     }
 }
 
