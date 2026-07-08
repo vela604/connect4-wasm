@@ -23,3 +23,21 @@ int main(int /*argc*/, char* /*argv*/[]) {
 
     return 0;
 }
+
+// main.cpp ke end mein add karein
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+
+extern "C" {
+    // Ye function JavaScript call karega
+    EMSCRIPTEN_KEEPALIVE
+    void send_uci_command(const char* command) {
+        if (g_uci) {
+            // Aapko apne uci.h me ek public function banana padega `process_command(std::string cmd)`
+            // jo lines ko waise hi handle kare jaise while(getline) wala loop karta tha.
+            g_uci->process_command(std::string(command)); 
+        }
+    }
+}
+#endif
+

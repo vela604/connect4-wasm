@@ -11,7 +11,12 @@ public:
     UCI();
     ~UCI();
 
+    // Original blocking loop (Terminal/CLI ke liye)
     void run();
+
+    // NAYA FUNCTION: WebAssembly (JS) se direct string commands lene ke liye
+    // Taaki std::cin par block na hona pade
+    void process_command(const std::string& line);
 
 private:
     void cmd_uci();

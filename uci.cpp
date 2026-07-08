@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstring>
 
+// CLI aesthetics (sirf display() aur terminal mode ke liye bache hue hain)
 #define ANSI_RESET   "\033[0m"
 #define ANSI_BOLD    "\033[1m"
 #define ANSI_RED     "\033[31m"
@@ -31,7 +32,7 @@ UCI::~UCI() {
 }
 
 // ─────────────────────────────────────────────
-//  Board printer
+//  Board printer (CLI mode ke liye)
 // ─────────────────────────────────────────────
 static void print_board(const Position& pos) {
     BB p1, p2;
@@ -57,79 +58,41 @@ static void print_board(const Position& pos) {
         : std::string(ANSI_RED)    + "P2 (Red ●)"    + ANSI_RESET;
     std::cout << "  Move " << ANSI_BOLD << pos.moves << ANSI_RESET
               << "  |  " << mover << " to play\n\n";
-}
-
-// ─────────────────────────────────────────────
-//  Score formatter
-// ─────────────────────────────────────────────
-static std::string format_score(int score, int mate_in) {
-    std::ostringstream oss;
-    if (std::abs(score) >= MATE_THRESHOLD) {
-        if (score > 0) {
-            oss << ANSI_GREEN << ANSI_BOLD << "+WIN";
-            if (mate_in > 0) oss << " in " << mate_in;
-            oss << ANSI_RESET;
-        } else {
-            oss << ANSI_RED << ANSI_BOLD << "-LOSS";
-            if (mate_in < 0) oss << " in " << -mate_in;
-            oss << ANSI_RESET;
-        }
-    } else if (score == 0) {
-        oss << ANSI_WHITE << "=  DRAW" << ANSI_RESET;
-    } else if (score > 0) {
-        oss << ANSI_GREEN << "+" << std::setw(6) << score << ANSI_RESET;
-    } else {
-        oss << ANSI_RED   << std::setw(7) << score << ANSI_RESET;
-    }
-    return oss.str();
+    std::cout.flush();
 }
 
 // ─────────────────────────────────────────────
 //  Progress callback — called after each depth
-//  Sirf ek line print karta hai, koi live thread nahi
 // ─────────────────────────────────────────────
 void UCI::on_progress(const SearchResult& r, const SearchStats& s) {
     print_info(r, s);
 }
 
+// STRICT UCI FORMAT FOR JAVASCRIPT PARSER (NO ANSI COLORS HERE)
 void UCI::print_info(const SearchResult& result, const SearchStats& stats) {
-    uint64_t nodes   = stats.nodes_explored.load();
-    uint64_t pruned  = stats.nodes_pruned.load();
-    uint64_t tt_hits = stats.tt_hits.load();
-    double   pct_p   = (nodes + pruned) > 0
-                       ? 100.0 * pruned / (nodes + pruned) : 0.0;
+    uint64_t nodes = stats.nodes_explored.load();
+    
+    // JS Regex is expected to parse exactly this format:
+    // info depth <D> nodes <N> nps <NPS> score <cp/mate> <VAL> pv <M1 M2...>
+    std::cout << "info depth " << result.depth 
+              << " nodes " << nodes 
+              << " nps 0" // Defaulting nps to 0 for now
+              << " score ";
 
-    std::cout << ANSI_BOLD << ANSI_CYAN
-              << "[ d" << std::setw(2) << result.depth << " ] "
-              << ANSI_RESET
-              << format_score(result.score, result.mate_in) << "  ";
-
-    if (result.best_move >= 0)
-        std::cout << "mv:" << ANSI_MAGENTA << ANSI_BOLD
-                  << result.best_move << ANSI_RESET << "  ";
-
-    std::cout << ANSI_WHITE << std::setw(9) << nodes << ANSI_RESET << "n  "
-              << ANSI_YELLOW
-              << std::fixed << std::setprecision(1) << pct_p << "%"
-              << ANSI_RESET << "prn  "
-              << "tt:" << tt_hits;
+    if (std::abs(result.score) >= MATE_THRESHOLD) {
+        int mate_val = (result.score > 0) ? result.mate_in : -result.mate_in;
+        std::cout << "mate " << mate_val;
+    } else {
+        std::cout << "cp " << result.score;
+    }
 
     if (!result.pv.empty()) {
-        std::cout << "  pv";
+        std::cout << " pv";
         for (int c : result.pv) std::cout << " " << c;
     }
 
-    if (std::abs(result.score) >= MATE_THRESHOLD) {
-        if (result.score > 0)
-            std::cout << "  " << ANSI_GREEN << ANSI_BOLD
-                      << "★WIN/" << result.mate_in << ANSI_RESET;
-        else
-            std::cout << "  " << ANSI_RED << ANSI_BOLD
-                      << "✗LOSS/" << -result.mate_in << ANSI_RESET;
-    }
-
     std::cout << "\n";
-    std::cout.flush();
+    std::cout.flush(); // Zaroori hai taaki Web Worker turant message receive kare
 }
 
 // ─────────────────────────────────────────────
@@ -152,23 +115,24 @@ void UCI::cmd_isready() {
 void UCI::cmd_ucinewgame() {
     engine_.reset();
     current_pos_ = Position{};
-    std::cout << ANSI_GREEN << "  [New game]\n" << ANSI_RESET;
-    std::cout.flush();
+    // std::cerr use kiya hai taaki output stdout me mix hoke JS parser ko disturb na kare
+    std::cerr << "  [New game]\n";
+    std::cerr.flush();
 }
 
 void UCI::cmd_display() { print_board(current_pos_); }
 
 void UCI::cmd_eval() {
     int score = evaluate(current_pos_);
-    std::cout << "  Static eval: " << format_score(score, 0) << "\n";
+    std::cerr << "  Static eval: " << score << "\n";
     int ct = count_threats(current_pos_.current,  current_pos_.opponent());
     int ot = count_threats(current_pos_.opponent(), current_pos_.current);
-    std::cout << "  My threats: " << ct << "  Opp threats: " << ot << "\n";
-    std::cout.flush();
+    std::cerr << "  My threats: " << ct << "  Opp threats: " << ot << "\n";
+    std::cerr.flush();
 }
 
 void UCI::cmd_help() {
-    std::cout << ANSI_BOLD
+    std::cerr << ANSI_BOLD
               << "\n  ╔══════════════════════════════════╗\n"
               << "  ║   Connect-4 Engine — Commands    ║\n"
               << "  ╠══════════════════════════════════╣\n"
@@ -185,27 +149,17 @@ void UCI::cmd_help() {
               << "  ║  quit (q)       exit             ║\n"
               << "  ╚══════════════════════════════════╝\n\n"
               << ANSI_RESET;
-    std::cout.flush();
+    std::cerr.flush();
 }
 
-// ─────────────────────────────────────────────
-//  setoption name <Name> value <Value>
-//
-//  Currently supported:
-//    Hash    — TT size in MB
-//    Threads — 0 = auto-detect all CPU cores on
-//              this machine (default), N = pin to
-//              exactly N threads
-// ─────────────────────────────────────────────
 void UCI::cmd_setoption(const std::string& line) {
     size_t np = line.find("name ");
     size_t vp = line.find(" value ");
-    if (np == std::string::npos) { std::cout << "  [Error] Bad setoption\n"; return; }
+    if (np == std::string::npos) return;
 
     std::string name = (vp != std::string::npos)
         ? line.substr(np + 5, vp - (np + 5))
         : line.substr(np + 5);
-    // trim trailing/leading spaces
     while (!name.empty() && name.back() == ' ')  name.pop_back();
     while (!name.empty() && name.front() == ' ') name.erase(name.begin());
 
@@ -216,18 +170,7 @@ void UCI::cmd_setoption(const std::string& line) {
         try { n = std::stoi(value); } catch (...) { n = 0; }
         if (n < 0) n = 0;
         engine_.set_threads(static_cast<unsigned>(n));
-        if (n == 0) {
-            std::cout << "  [Threads] auto (will use all "
-                      << Engine::hardware_threads() << " detected cores)\n";
-        } else {
-            std::cout << "  [Threads] pinned to " << n << "\n";
-        }
-    } else if (name == "Hash") {
-        std::cout << "  [Hash] note: Hash size takes effect on next engine restart\n";
-    } else {
-        std::cout << "  [Error] Unknown option: " << name << "\n";
     }
-    std::cout.flush();
 }
 
 bool UCI::apply_moves(const std::string& moves_str) {
@@ -236,13 +179,9 @@ bool UCI::apply_moves(const std::string& moves_str) {
     while (iss >> token) {
         if (token.size() == 1 && token[0] >= '0' && token[0] <= '6') {
             int col = token[0] - '0';
-            if (!current_pos_.can_play(col)) {
-                std::cout << "  [Error] Column " << col << " full\n";
-                return false;
-            }
+            if (!current_pos_.can_play(col)) return false;
             current_pos_ = current_pos_.after(col);
         } else {
-            std::cout << "  [Error] Bad move: " << token << "\n";
             return false;
         }
     }
@@ -261,7 +200,7 @@ void UCI::cmd_position(const std::string& line) {
         size_t fstart = fp + 4;
         fs = (mp != std::string::npos) ? line.substr(fstart, mp - fstart)
                                        : line.substr(fstart);
-        if (!set_fen(fs)) { std::cout << "  [Error] Bad FEN\n"; return; }
+        if (!set_fen(fs)) return;
     }
     if (mp != std::string::npos)
         apply_moves(line.substr(mp + 7));
@@ -289,22 +228,7 @@ bool UCI::set_fen(const std::string& fen) {
     return true;
 }
 
-// ─────────────────────────────────────────────
-//  cmd_go
-//
-//  Live thread HATA diya — sirf depth lines print hoti hain.
-//  Infinite mode mein search_thread background mein chalta hai.
-//  Stop/Enter dono se cleanly ruk jaata hai.
-// ─────────────────────────────────────────────
 void UCI::cmd_go(const std::string& line) {
-    // Always fully join the previous search thread before touching
-    // search_thread_ again — even if it already finished on its own
-    // (e.g. an unlimited search auto-stops as soon as it finds a
-    // forced win/loss, which sets searching_ = false without ever
-    // joining the thread). Re-assigning std::thread to an object that
-    // still represents a joinable thread calls std::terminate() and
-    // kills the whole process — this was the cause of the crash on
-    // the 2nd "go infinite" after a mate was found.
     if (searching_) {
         engine_.stop();
     }
@@ -322,33 +246,14 @@ void UCI::cmd_go(const std::string& line) {
 
     bool unlimited = (line.find("infinite") != std::string::npos || fixed_depth == 0);
 
-    if (unlimited) {
-        std::cout << ANSI_CYAN << ANSI_BOLD
-                  << "\n  Searching... (type 'stop' or press ENTER to halt)\n\n"
-                  << ANSI_RESET;
-    } else {
-        std::cout << ANSI_CYAN << ANSI_BOLD
-                  << "\n  Searching depth " << fixed_depth << "...\n\n"
-                  << ANSI_RESET;
-    }
-    std::cout << ANSI_GRAY << "  [Using " << ANSI_RESET << ANSI_BOLD
-              << engine_.configured_threads() << ANSI_RESET << ANSI_GRAY
-              << " CPU thread(s) on this machine]\n" << ANSI_RESET;
-    std::cout.flush();
-    print_board(current_pos_);
-
     Position pos_copy = current_pos_;
     searching_ = true;
 
-    // Reset engine (clears stop flag from previous search)
     engine_.reset();
     current_pos_ = pos_copy;
 
     search_thread_ = std::thread([this, pos_copy, fixed_depth]() {
         SearchResult result = engine_.search(pos_copy, fixed_depth);
-
-        std::cout << "\n" << ANSI_BOLD << ANSI_GREEN
-                  << "  ══ Done ═══════════════════════════════════\n" << ANSI_RESET;
         print_final_result(result);
         searching_ = false;
     });
@@ -356,89 +261,23 @@ void UCI::cmd_go(const std::string& line) {
     if (!unlimited) {
         search_thread_.join();
     }
-    // unlimited: returns immediately, search runs in background
 }
 
+// STRICT UCI FORMAT (Outputs ONLY "bestmove X")
 void UCI::print_final_result(const SearchResult& result) {
-    // A search that got interrupted (e.g. a new 'go' arrived before this
-    // one finished even depth 1) returns depth=0/best_move=-1/score=0 —
-    // identical in shape to a genuine draw. Label it explicitly so it's
-    // never confused with a real evaluation.
-    if (result.depth == 0 && result.best_move < 0) {
-        std::cout << "  " << ANSI_YELLOW
-                  << "[Search interrupted before completing — no result. "
-                     "Wait for a search to finish before sending another 'go'.]"
-                  << ANSI_RESET << "\n";
-        return;
-    }
+    if (result.depth == 0 && result.best_move < 0) return; // Search interrupted
 
-    std::cout << "  bestmove " << ANSI_BOLD << ANSI_MAGENTA;
+    std::cout << "bestmove ";
     if (result.best_move >= 0) std::cout << result.best_move;
-    else                       std::cout << "(none)";
-    std::cout << ANSI_RESET << "\n"
-              << "  score    " << format_score(result.score, result.mate_in) << "\n"
-              << "  depth    " << result.depth << "\n";
-
-    const SearchStats& s = engine_.stats();
-    uint64_t nodes  = s.nodes_explored.load();
-    uint64_t pruned = s.nodes_pruned.load();
-    double pct_p = (nodes + pruned) > 0 ? 100.0*pruned/(nodes+pruned) : 0.0;
-
-    std::cout << "  nodes    " << nodes << "\n"
-              << "  pruned   " << pruned
-              << " (" << std::fixed << std::setprecision(1) << pct_p << "%)\n"
-              << "  tt_hits  " << s.tt_hits.load() << "\n"
-              << "  threads  " << engine_.threads_used() << "\n";
-
-    if (!result.pv.empty()) {
-        std::cout << "  pv      ";
-        for (int c : result.pv) std::cout << " " << c;
-        std::cout << "\n";
-    }
-
-    if (std::abs(result.score) >= MATE_THRESHOLD) {
-        if (result.score > 0)
-            std::cout << "\n  " << ANSI_GREEN << ANSI_BOLD
-                      << "★ FORCED WIN in " << result.mate_in << " move(s)!"
-                      << ANSI_RESET << "\n";
-        else
-            std::cout << "\n  " << ANSI_RED << ANSI_BOLD
-                      << "✗ FORCED LOSS in " << -result.mate_in << " move(s)"
-                      << ANSI_RESET << "\n";
-    }
-
-    std::cout << ANSI_BOLD << ANSI_GREEN
-              << "  ═══════════════════════════════════════════\n\n"
-              << ANSI_RESET;
+    else                       std::cout << "none";
+    std::cout << "\n";
     std::cout.flush();
 }
 
 void UCI::cmd_move(int col) {
-    if (col < 0 || col >= COLS) {
-        std::cout << "  [Error] Column 0-6\n"; return;
-    }
-    if (!current_pos_.can_play(col)) {
-        std::cout << "  [Error] Column " << col << " full\n"; return;
-    }
-    if (is_win(current_pos_.current) || is_win(current_pos_.opponent())) {
-        std::cout << "  [Error] Game over\n"; return;
-    }
-
-    std::string player = (current_pos_.side_to_move() == 0)
-        ? std::string(ANSI_YELLOW) + "P1" + ANSI_RESET
-        : std::string(ANSI_RED)    + "P2" + ANSI_RESET;
-    std::cout << "  " << player << " plays col " << ANSI_BOLD << col << ANSI_RESET << "\n";
+    if (col < 0 || col >= COLS || !current_pos_.can_play(col)) return;
+    if (is_win(current_pos_.current) || is_win(current_pos_.opponent())) return;
     current_pos_ = current_pos_.after(col);
-    print_board(current_pos_);
-
-    if (is_win(current_pos_.opponent())) {
-        std::string w = (current_pos_.side_to_move() == 0)
-            ? std::string(ANSI_RED)    + "P2 WINS!" + ANSI_RESET
-            : std::string(ANSI_YELLOW) + "P1 WINS!" + ANSI_RESET;
-        std::cout << "  " << ANSI_BOLD << w << "\n\n"; return;
-    }
-    if (current_pos_.is_full())
-        std::cout << "  " << ANSI_WHITE << ANSI_BOLD << "DRAW!" << ANSI_RESET << "\n\n";
 }
 
 void UCI::cmd_stop() {
@@ -446,8 +285,6 @@ void UCI::cmd_stop() {
     engine_.stop();
     if (search_thread_.joinable()) search_thread_.join();
     searching_ = false;
-    std::cout << "  [Stopped]\n";
-    std::cout.flush();
 }
 
 void UCI::cmd_quit() {
@@ -473,68 +310,73 @@ uint64_t UCI::perft_inner(Position pos, int depth) {
 }
 
 void UCI::cmd_perft(int depth) {
-    std::cout << "  Perft(" << depth << ")...\n";
     auto t0 = std::chrono::high_resolution_clock::now();
     uint64_t n = perft_inner(current_pos_, depth);
     double ms = std::chrono::duration<double, std::milli>(
         std::chrono::high_resolution_clock::now() - t0).count();
-    std::cout << "  Nodes: " << n
+    std::cerr << "  Nodes: " << n
               << "  Time: " << std::fixed << std::setprecision(1) << ms << "ms\n";
-    std::cout.flush();
+    std::cerr.flush();
 }
 
 // ─────────────────────────────────────────────
-//  Main loop
+//  COMMAND PROCESSOR (For WebAssembly & CLI)
+// ─────────────────────────────────────────────
+void UCI::process_command(const std::string& raw_line) {
+    std::string line = raw_line;
+    
+    // Trailing spaces ya carriage returns remove karna
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+        line.pop_back();
+
+    if (line.empty()) {
+        if (searching_) cmd_stop();
+        return;
+    }
+
+    if      (line == "uci")                    cmd_uci();
+    else if (line == "isready")                cmd_isready();
+    else if (line == "ucinewgame")             cmd_ucinewgame();
+    else if (line == "display" || line == "d") cmd_display();
+    else if (line == "eval"    || line == "e") cmd_eval();
+    else if (line == "stop")                   cmd_stop();
+    else if (line == "quit" || line == "exit" || line == "q") cmd_quit();
+    else if (line == "help" || line == "h")    cmd_help();
+    else if (line.substr(0, 8) == "position")  cmd_position(line);
+    else if (line.substr(0, 9) == "setoption") cmd_setoption(line);
+    else if (line.substr(0, 2) == "go")        cmd_go(line);
+    else if (line.substr(0, 5) == "perft") {
+        std::istringstream iss(line.substr(5));
+        int d = 5; iss >> d; cmd_perft(d);
+    }
+    else if (line.substr(0, 4) == "move") {
+        std::istringstream iss(line.substr(4));
+        int col = -1; iss >> col; cmd_move(col);
+    }
+}
+
+// ─────────────────────────────────────────────
+//  Main CLI loop
 // ─────────────────────────────────────────────
 void UCI::run() {
-    std::cout << ANSI_BOLD << ANSI_CYAN
+    std::cerr << ANSI_BOLD << ANSI_CYAN
               << "\n  Connect-4 Engine v1.0\n"
               << "  Negamax + Alpha-Beta + TT (Lazy SMP)\n"
               << ANSI_RESET
               << "  Detected " << ANSI_BOLD << Engine::hardware_threads() << ANSI_RESET
-              << " CPU thread(s) on this machine — search will auto-scale to use them.\n"
-              << "  Type " << ANSI_YELLOW << "help" << ANSI_RESET << "\n\n";
-    std::cout.flush();
+              << " CPU thread(s)\n\n";
+    std::cerr.flush();
 
     std::string line;
     while (!quit_flag_) {
+        // Sirf jab CLI mode me chal raha ho tab input prompt show hoga
         if (!searching_) {
-            std::cout << ANSI_GRAY << "> " << ANSI_RESET;
-            std::cout.flush();
+            std::cerr << ANSI_GRAY << "> " << ANSI_RESET;
+            std::cerr.flush();
         }
 
         if (!std::getline(std::cin, line)) break;
 
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
-            line.pop_back();
-
-        if (line.empty()) {
-            if (searching_) cmd_stop();
-            continue;
-        }
-
-        if      (line == "uci")                    cmd_uci();
-        else if (line == "isready")                cmd_isready();
-        else if (line == "ucinewgame")             cmd_ucinewgame();
-        else if (line == "display" || line == "d") cmd_display();
-        else if (line == "eval"    || line == "e") cmd_eval();
-        else if (line == "stop")                   cmd_stop();
-        else if (line == "quit" || line == "exit" || line == "q") cmd_quit();
-        else if (line == "help" || line == "h")    cmd_help();
-        else if (line.substr(0, 8) == "position") cmd_position(line);
-        else if (line.substr(0, 9) == "setoption") cmd_setoption(line);
-        else if (line.substr(0, 2) == "go")       cmd_go(line);
-        else if (line.substr(0, 5) == "perft") {
-            std::istringstream iss(line.substr(5));
-            int d = 5; iss >> d; cmd_perft(d);
-        }
-        else if (line.substr(0, 4) == "move") {
-            std::istringstream iss(line.substr(4));
-            int col = -1; iss >> col; cmd_move(col);
-        }
-        else std::cout << "  Unknown: '" << line << "'\n";
-
-        std::cout.flush();
+        process_command(line);
     }
-    std::cout << "\n  Goodbye!\n";
 }
