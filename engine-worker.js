@@ -17,13 +17,21 @@ importScripts('engine.js');
 let isSearching = false;
 let startTime = 0;
 
+// Pure JavaScript handling - No Emscripten functions needed!
 function sendStringCommand(cmdStr) {
-    // Emscripten helpers ko call karne ka sabse safe tarika
-    const length = (self.Module.lengthBytesUTF8 || lengthBytesUTF8)(cmdStr) + 1;
-    const ptr = (self.Module._malloc || _malloc)(length);
-    (self.Module.stringToUTF8 || stringToUTF8)(cmdStr, ptr, length);
-    (self.Module._sendUciCommand || _sendUciCommand)(ptr);
-    (self.Module._free || _free)(ptr);
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(cmdStr + '\0'); // Add null-terminator
+    
+    // Allocate heap memory safely
+    const ptr = self.Module._stackAlloc(bytes.length);
+    self.Module.HEAPU8.set(bytes, ptr);
+    
+    // Call the C++ function directly
+    if (typeof self.Module._sendUciCommand === 'function') {
+        self.Module._sendUciCommand(ptr);
+    } else if (typeof _sendUciCommand === 'function') {
+        _sendUciCommand(ptr);
+    }
 }
 
 function parseEngineOutput(line) {
