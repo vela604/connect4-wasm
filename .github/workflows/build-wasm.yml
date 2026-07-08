@@ -10,6 +10,9 @@ on:
       - '.github/workflows/build-wasm.yml'
   workflow_dispatch: {}   # lets you also click "Run workflow" manually
 
+permissions:
+  contents: write   # required so the "commit built files back" step can push
+
 jobs:
   build:
     runs-on: ubuntu-latest
