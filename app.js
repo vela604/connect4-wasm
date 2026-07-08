@@ -6,17 +6,22 @@ let flipped = false;
 let engineEnabled = true;
 let engineIsReady = false;
 
-// 1. SETUP EMSCRIPTEN MODULE DIRECTLY IN MAIN THREAD
+// 1. SETUP EMSCRIPTEN MODULE
 var Module = {
     print: function(text) {
         parseEngineOutput(text);
     },
     printErr: function(text) {
-        console.error("Engine:", text);
+        // Agar error dekhna ho to console me aayega
+        console.warn("Engine Info:", text);
     },
     onRuntimeInitialized: function() {
         console.log("WASM Engine Loaded!");
         engineIsReady = true;
+        
+        // FIX 1: Prevent Thread Deadlock by limiting to 1 thread in browser
+        send_uci_command('setoption name Threads value 1');
+
         const status = document.getElementById('engine-status');
         status.textContent = 'Engine Ready';
         status.classList.replace('bg-red-900', 'bg-green-900');
@@ -30,25 +35,35 @@ function send_uci_command(cmd) {
     }
 }
 
-const INFO_REGEX = /info depth (\d+).*?nodes (\d+).*?score (cp|mate) ([\-\d]+).*?pv ([\d\s]+)/;
-
+// FIX 2: More robust parser that doesn't crash if 'pv' is missing
 function parseEngineOutput(line) {
-    const match = line.match(INFO_REGEX);
-    if (match) {
+    // Agar output dekhna ho ki background me kya chal raha hai, to isse uncomment karein:
+    // console.log("Raw Engine Output:", line);
+
+    if (!line.startsWith("info ")) return; // Sirf info wali lines chahiye
+
+    let depthMatch = line.match(/depth (\d+)/);
+    let nodesMatch = line.match(/nodes (\d+)/);
+    let scoreMatch = line.match(/score (cp|mate) ([\-\d]+)/);
+    let pvMatch = line.match(/pv ([\d\s]+)/);
+
+    if (depthMatch && nodesMatch && scoreMatch) {
         const payload = {
-            depth: parseInt(match[1], 10),
-            nodes: parseInt(match[2], 10),
+            depth: parseInt(depthMatch[1], 10),
+            nodes: parseInt(nodesMatch[1], 10),
             nps: 0,
-            scoreType: match[3],
-            scoreValue: parseInt(match[4], 10),
-            pv: match[5].trim().split(' ').map(Number)
+            scoreType: scoreMatch[1],
+            scoreValue: parseInt(scoreMatch[2], 10),
+            // Agar PV mile to array banayein, warna khali chhod dein
+            pv: pvMatch ? pvMatch[1].trim().split(' ').map(Number) : []
         };
         updateAnalyticsPanel(payload);
         updateEvalBar(payload);
     }
 }
 
-// DOM Elements
+// --- Niche ka pura UI logic SAME rahega ---
+
 const gridEl = document.getElementById('grid');
 const evalFill = document.getElementById('eval-fill');
 const evalText = document.getElementById('eval-text');
@@ -160,10 +175,14 @@ function triggerEngine() {
     status.classList.replace('text-green-300', 'text-yellow-300');
     
     send_uci_command('stop');
-    let moveString = viewMoves.join(' ');
-    let positionCommand = moveString ? `position startpos moves ${moveString}` : `position startpos`;
-    send_uci_command(positionCommand);
-    send_uci_command('go infinite');
+    
+    // Thoda sa delay de rahe hain taaki pichla search proper exit ho jaye aur memory conflict na ho
+    setTimeout(() => {
+        let moveString = viewMoves.join(' ');
+        let positionCommand = moveString ? `position startpos moves ${moveString}` : `position startpos`;
+        send_uci_command(positionCommand);
+        send_uci_command('go infinite');
+    }, 50);
 }
 
 function updateAnalyticsPanel(info) {
@@ -185,7 +204,7 @@ function updateAnalyticsPanel(info) {
     pvContainer.innerHTML = '';
     info.pv.forEach(move => {
         const m = document.createElement('span');
-        m.className = 'bg-blue-900 text-blue-100 px-1 rounded';
+        m.className = 'bg-blue-900 text-blue-100 px-1 rounded mx-1';
         m.textContent = move;
         pvContainer.appendChild(m);
     });
@@ -220,7 +239,11 @@ document.getElementById('btn-flip').onclick = () => { flipped = !flipped; render
 document.getElementById('btn-undo').onclick = () => {
     if (currentMoves.length > 0) { currentMoves.pop(); viewMoves = [...currentMoves]; renderBoard(); }
 };
-document.getElementById('btn-reset').onclick = () => { currentMoves = []; viewMoves = []; renderBoard(); };
+document.getElementById('btn-reset').onclick = () => { 
+    currentMoves = []; viewMoves = []; 
+    // Engine ko reset ke baad dobara trigger karenge empty board par
+    renderBoard(); 
+};
 toggleEngineBtn.onchange = (e) => {
     engineEnabled = e.target.checked;
     const status = document.getElementById('engine-status');
