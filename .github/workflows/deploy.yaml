@@ -33,7 +33,7 @@ jobs:
             -s EXPORTED_RUNTIME_METHODS='["ccall", "cwrap"]' \
             -s ALLOW_MEMORY_GROWTH=1 \
             -s NO_EXIT_RUNTIME=1 \
-            -s ENVIRONMENT=worker
+            -s ENVIRONMENT=web,worker
 
       - name: Prepare Deployment Folder
         run: |
