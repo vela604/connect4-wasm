@@ -3,8 +3,8 @@ name: Build and Deploy C4 Engine
 on:
   push:
     branches:
-      - main  # Jab bhi aap main branch par push karenge, workflow trigger hoga
-  workflow_dispatch: # GitHub Actions UI se manual trigger karne ke liye
+      - main  # Jab bhi aap main branch par push karenge, workflow chalega
+  workflow_dispatch: # Manual trigger ke liye
 
 # GitHub Pages par deploy karne ki permissions
 permissions:
@@ -32,19 +32,18 @@ jobs:
             -s WASM=1 \
             -s EXPORTED_RUNTIME_METHODS='["ccall", "cwrap"]' \
             -s ALLOW_MEMORY_GROWTH=1 \
-            -s NO_EXIT_RUNTIME=1 \
-            -s ENVIRONMENT=web,worker
+            -s NO_EXIT_RUNTIME=1
 
       - name: Prepare Deployment Folder
         run: |
           mkdir dist
           
-          # 1. UI, Worker, aur Service Worker files copy karein
-          # (Dhyan rakhein ki ye sabhi files aapke root folder me maujood hon)
-          cp index.html styles.css app.js engine-worker.js coi-serviceworker.js dist/
+          # 1. Main UI aur COI Service Worker copy karein
+          # (Ab styles.css aur engine-worker.js nahi chahiye)
+          cp index.html app.js coi-serviceworker.js dist/
           
-          # 2. Emscripten se generate hui Wasm aur threading files copy karein
-          # (connect4_engine.js, connect4_engine.wasm, connect4_engine.worker.js)
+          # 2. Emscripten se generate hui SABHI Wasm files copy karein
+          # Ye command automatically JS, WASM, aur naya WORKER.JS file utha legi
           cp connect4_engine.* dist/
 
       - name: Upload Artifact for GitHub Pages

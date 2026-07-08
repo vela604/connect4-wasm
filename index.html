@@ -4,19 +4,62 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Connect 4 Engine Analysis</title>
-   
+    
     <script src="coi-serviceworker.js"></script>
     
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="/styles.css">
+    
+    <style>
+        .c4-cell {
+            width: 3.5rem; height: 3.5rem;
+            background-color: #111827;
+            border-radius: 50%;
+            box-shadow: inset 0 4px 6px rgba(0,0,0,0.6);
+            position: relative; overflow: hidden;
+        }
+        .token {
+            width: 100%; height: 100%; border-radius: 50%;
+            position: absolute; top: 0; left: 0;
+        }
+        .token.p1 {
+            background: radial-gradient(circle at 30% 30%, #fde047, #ca8a04);
+            box-shadow: 0 4px 4px rgba(0,0,0,0.3);
+        }
+        .token.p2 {
+            background: radial-gradient(circle at 30% 30%, #f87171, #b91c1c);
+            box-shadow: 0 4px 4px rgba(0,0,0,0.3);
+        }
+        @keyframes drop {
+            0% { transform: translateY(-300px); opacity: 0; }
+            60% { transform: translateY(10px); opacity: 1; }
+            80% { transform: translateY(-5px); }
+            100% { transform: translateY(0); }
+        }
+        .token-drop { animation: drop 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards; }
+        .col-interactive { cursor: pointer; border-radius: 999px; transition: background-color 0.2s; }
+        .col-interactive:hover { background-color: rgba(255, 255, 255, 0.1); }
+        .col-interactive:hover .c4-cell.empty.preview-target::after {
+            content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            border-radius: 50%; opacity: 0.4;
+        }
+        .col-interactive.hover-p1:hover .c4-cell.empty.preview-target::after { background: #ca8a04; }
+        .col-interactive.hover-p2:hover .c4-cell.empty.preview-target::after { background: #b91c1c; }
+        .move-badge {
+            padding: 0.15rem 0.4rem; border-radius: 0.25rem; background-color: #374151;
+            color: #d1d5db; cursor: pointer; transition: all 0.2s;
+        }
+        .move-badge:hover { background-color: #4b5563; }
+        .move-badge.active { background-color: #3b82f6; color: #ffffff; font-weight: bold; }
+    </style>
 
+    <script src="connect4_engine.js"></script>
 </head>
 <body class="bg-gray-900 text-gray-100 font-sans h-screen flex flex-col overflow-hidden">
 
     <header class="bg-gray-800 p-4 shadow-md flex justify-between items-center">
         <h1 class="text-xl font-bold text-blue-400">C4<span class="text-white">Analysis</span></h1>
         <div class="flex space-x-3">
-            <span id="engine-status" class="px-3 py-1 rounded-full bg-green-900 text-green-300 text-xs font-bold uppercase tracking-wide">Engine Ready</span>
+            <span id="engine-status" class="px-3 py-1 rounded-full bg-red-900 text-red-300 text-xs font-bold uppercase tracking-wide">Loading Wasm...</span>
         </div>
     </header>
 
@@ -79,8 +122,7 @@
                         <span>Engine On</span>
                     </label>
                 </div>
-                <div id="move-history" class="flex-1 overflow-y-auto bg-gray-900 rounded p-2 text-sm font-mono flex flex-wrap content-start gap-1">
-                    </div>
+                <div id="move-history" class="flex-1 overflow-y-auto bg-gray-900 rounded p-2 text-sm font-mono flex flex-wrap content-start gap-1"></div>
             </div>
         </div>
     </main>

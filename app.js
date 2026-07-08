@@ -1,230 +1,237 @@
-// main.js
-
 const ROWS = 6;
 const COLS = 7;
-let gameHistory = []; // Stores column numbers played (e.g., [3, 4, 2])
+let currentMoves = [];
+let viewMoves = [];
+let flipped = false;
 let engineEnabled = true;
+let engineIsReady = false;
 
-// DOM Nodes
-const boardContainer = document.getElementById('board-container');
-const evalFill = document.getElementById('eval-fill');
-const evalScore = document.getElementById('eval-score');
-const statDepth = document.getElementById('stat-depth');
-const statNps = document.getElementById('stat-nps');
-const statNodes = document.getElementById('stat-nodes');
-const pvContainer = document.getElementById('pv-container');
-const moveHistoryTree = document.getElementById('move-history-tree');
-const engineStatusText = document.getElementById('engine-status-text');
-const engineIndicator = document.getElementById('engine-status-indicator');
-
-// Worker Initialization
-const worker = new Worker('engine-worker.js');
-
-worker.onmessage = function(e) {
-    const msg = e.data;
-    
-    if (msg.type === 'ready') {
-        engineStatusText.textContent = "Engine Ready";
-        engineIndicator.classList.replace('bg-blue-500', 'bg-green-500');
-        engineIndicator.classList.remove('animate-pulse');
-        requestAnalysis();
-    } 
-    else if (msg.type === 'info' && engineEnabled) {
-        updateAnalyticsUI(msg);
-    }
-    else if (msg.type === 'bestmove') {
-        if (msg.move === null) {
-            // Game Over or Interrupted
-            pvContainer.textContent = "Game Finished / Forced Outcome Reached";
-            evalScore.textContent = "Game Over";
-        }
+// 1. SETUP EMSCRIPTEN MODULE DIRECTLY IN MAIN THREAD
+var Module = {
+    print: function(text) {
+        parseEngineOutput(text);
+    },
+    printErr: function(text) {
+        console.error("Engine:", text);
+    },
+    onRuntimeInitialized: function() {
+        console.log("WASM Engine Loaded!");
+        engineIsReady = true;
+        const status = document.getElementById('engine-status');
+        status.textContent = 'Engine Ready';
+        status.classList.replace('bg-red-900', 'bg-green-900');
+        status.classList.replace('text-red-300', 'text-green-300');
     }
 };
 
-// ─── INITIALIZATION ──────────────────────────────────────────
+function send_uci_command(cmd) {
+    if (engineIsReady && Module.ccall) {
+        Module.ccall('send_uci_command', 'void', ['string'], [cmd]);
+    }
+}
 
-function createGrid() {
-    boardContainer.innerHTML = '';
-    
-    for (let r = ROWS - 1; r >= 0; r--) {
-        for (let c = 0; c < COLS; c++) {
+const INFO_REGEX = /info depth (\d+).*?nodes (\d+).*?score (cp|mate) ([\-\d]+).*?pv ([\d\s]+)/;
+
+function parseEngineOutput(line) {
+    const match = line.match(INFO_REGEX);
+    if (match) {
+        const payload = {
+            depth: parseInt(match[1], 10),
+            nodes: parseInt(match[2], 10),
+            nps: 0,
+            scoreType: match[3],
+            scoreValue: parseInt(match[4], 10),
+            pv: match[5].trim().split(' ').map(Number)
+        };
+        updateAnalyticsPanel(payload);
+        updateEvalBar(payload);
+    }
+}
+
+// DOM Elements
+const gridEl = document.getElementById('grid');
+const evalFill = document.getElementById('eval-fill');
+const evalText = document.getElementById('eval-text');
+const historyEl = document.getElementById('move-history');
+const toggleEngineBtn = document.getElementById('toggle-engine');
+
+function initBoard() {
+    gridEl.innerHTML = '';
+    for (let c = 0; c < COLS; c++) {
+        const colDiv = document.createElement('div');
+        colDiv.className = 'col-interactive flex flex-col gap-2 py-1';
+        colDiv.dataset.col = c;
+        for (let r = ROWS - 1; r >= 0; r--) {
             const cell = document.createElement('div');
-            cell.className = 'cell aspect-square bg-slate-900 rounded-full m-1 shadow-inner relative cursor-pointer hover:bg-slate-800 transition-colors duration-150';
-            cell.dataset.row = r;
-            cell.dataset.col = c;
-            cell.onclick = () => handleColumnClick(c);
-            boardContainer.appendChild(cell);
+            cell.className = 'c4-cell empty';
+            cell.id = `cell-${c}-${r}`;
+            colDiv.appendChild(cell);
         }
+        colDiv.addEventListener('click', () => handleMove(c));
+        gridEl.appendChild(colDiv);
     }
+    renderBoard();
 }
 
-// ─── GAME LOGIC & STATE ──────────────────────────────────────
-
-function getBoardState() {
-    const board = Array(ROWS).fill(null).map(() => Array(COLS).fill(0));
-    const colCounts = Array(COLS).fill(0);
-
-    for (let i = 0; i < gameHistory.length; i++) {
-        const col = gameHistory[i];
-        const row = colCounts[col];
-        if (row < ROWS) {
-            board[row][col] = (i % 2 === 0) ? 1 : 2; // 1 = Yellow (P1), 2 = Red (P2)
-            colCounts[col]++;
-        }
-    }
-    return { board, colCounts };
+function getBoardState(moves) {
+    let state = Array.from({ length: COLS }, () => []);
+    moves.forEach((col, idx) => {
+        const player = (idx % 2 === 0) ? 'p1' : 'p2';
+        state[col].push(player);
+    });
+    return state;
 }
 
-function handleColumnClick(col) {
-    const { colCounts } = getBoardState();
-    if (colCounts[col] >= ROWS) return; // Column full
+function renderBoard(animateLast = false) {
+    const state = getBoardState(viewMoves);
+    const currentPlayer = (viewMoves.length % 2 === 0) ? 'hover-p1' : 'hover-p2';
 
-    gameHistory.push(col);
-    renderState();
-    updateHistoryUI();
-    requestAnalysis();
-}
+    document.querySelectorAll('.col-interactive').forEach(col => {
+        col.classList.remove('hover-p1', 'hover-p2');
+        col.classList.add(currentPlayer);
+    });
 
-function renderState() {
-    const { board } = getBoardState();
-    const cells = boardContainer.getElementsByClassName('cell');
-
-    for (let r = ROWS - 1; r >= 0; r--) {
-        for (let c = 0; c < COLS; c++) {
-            const cellIndex = (ROWS - 1 - r) * COLS + c;
-            const cell = cells[cellIndex];
-            const player = board[r][c];
-
-            // Clear previous piece styling
+    for (let c = 0; c < COLS; c++) {
+        const colState = state[c];
+        const actualCol = flipped ? (COLS - 1 - c) : c;
+        const colDiv = document.querySelector(`.col-interactive[data-col="${actualCol}"]`);
+        
+        colDiv.querySelectorAll('.c4-cell').forEach(cell => {
             cell.innerHTML = '';
+            cell.classList.add('empty');
+            cell.classList.remove('preview-target');
+        });
 
-            if (player !== 0) {
-                const piece = document.createElement('div');
-                piece.className = `w-[88%] h-[88%] rounded-full absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 shadow-md animate-drop`;
-                if (player === 1) {
-                    piece.classList.add('bg-amber-400', 'border-2', 'border-amber-500');
-                } else {
-                    piece.classList.add('bg-rose-500', 'border-2', 'border-rose-600');
-                }
-                cell.appendChild(piece);
+        for (let r = 0; r < colState.length; r++) {
+            const cell = colDiv.querySelector(`#cell-${actualCol}-${r}`);
+            cell.classList.remove('empty');
+            const token = document.createElement('div');
+            token.className = `token ${colState[r]}`;
+            if (animateLast && c === viewMoves[viewMoves.length - 1] && r === colState.length - 1) {
+                token.classList.add('token-drop');
             }
+            cell.appendChild(token);
+        }
+
+        if (colState.length < ROWS) {
+            const previewCell = colDiv.querySelector(`#cell-${actualCol}-${colState.length}`);
+            if (previewCell) previewCell.classList.add('preview-target');
         }
     }
+    renderHistory();
+    triggerEngine();
 }
 
-function requestAnalysis() {
-    if (!engineEnabled) return;
+function handleMove(logicalCol) {
+    const col = flipped ? (COLS - 1 - logicalCol) : logicalCol;
+    const state = getBoardState(viewMoves);
+    if (state[col].length >= ROWS) return; 
+
+    if (viewMoves.length < currentMoves.length) {
+        currentMoves = currentMoves.slice(0, viewMoves.length);
+    }
+
+    currentMoves.push(col);
+    viewMoves = [...currentMoves];
+    renderBoard(true);
+}
+
+function renderHistory() {
+    historyEl.innerHTML = '';
+    currentMoves.forEach((col, idx) => {
+        const badge = document.createElement('span');
+        badge.className = `move-badge ${idx < viewMoves.length ? 'active' : ''}`;
+        const plyText = (idx % 2 === 0) ? `${(idx/2)+1}. ` : '';
+        badge.textContent = `${plyText}${col}`;
+        badge.onclick = () => {
+            viewMoves = currentMoves.slice(0, idx + 1);
+            renderBoard(false);
+        };
+        historyEl.appendChild(badge);
+    });
+    historyEl.scrollTop = historyEl.scrollHeight;
+}
+
+function triggerEngine() {
+    if (!engineEnabled || !engineIsReady) return;
+    const status = document.getElementById('engine-status');
+    status.textContent = 'Thinking...';
+    status.classList.replace('bg-green-900', 'bg-yellow-900');
+    status.classList.replace('text-green-300', 'text-yellow-300');
     
-    // Clear old data line instantly so user knows it's reloading
-    pvContainer.textContent = "Calculating...";
+    send_uci_command('stop');
+    let moveString = viewMoves.join(' ');
+    let positionCommand = moveString ? `position startpos moves ${moveString}` : `position startpos`;
+    send_uci_command(positionCommand);
+    send_uci_command('go infinite');
+}
+
+function updateAnalyticsPanel(info) {
+    document.getElementById('stat-depth').textContent = info.depth;
+    document.getElementById('stat-nodes').textContent = info.nodes.toLocaleString();
     
-    worker.postMessage({
-        cmd: 'position',
-        moves: gameHistory
+    let scoreText = '';
+    const isP1Turn = (viewMoves.length % 2 === 0);
+    if (info.scoreType === 'mate') {
+        let absoluteMate = isP1Turn ? info.scoreValue : -info.scoreValue;
+        scoreText = absoluteMate > 0 ? `M${absoluteMate}` : `-M${Math.abs(absoluteMate)}`;
+    } else {
+        let absoluteCP = isP1Turn ? info.scoreValue : -info.scoreValue;
+        scoreText = (absoluteCP > 0 ? '+' : '') + (absoluteCP / 100).toFixed(2);
+    }
+    document.getElementById('stat-score').textContent = scoreText;
+
+    const pvContainer = document.getElementById('stat-pv');
+    pvContainer.innerHTML = '';
+    info.pv.forEach(move => {
+        const m = document.createElement('span');
+        m.className = 'bg-blue-900 text-blue-100 px-1 rounded';
+        m.textContent = move;
+        pvContainer.appendChild(m);
     });
 }
 
-// ─── UI CONTROLS ─────────────────────────────────────────────
-
-function updateAnalyticsUI(data) {
-    statDepth.textContent = data.depth || '-';
-    statNodes.textContent = data.nodes ? data.nodes.toLocaleString() : '0';
-    statNps.textContent = data.nps ? data.nps.toLocaleString() : '-';
-    evalScore.textContent = data.scoreText || '0.0';
-
-    // Update Eval Bar UI
-    let percentage = 50; // default draw
-    if (data.scoreCp !== undefined) {
-        // Clamp score between -1000 and +1000 centipawns for UI scaling
-        let clamped = Math.max(-1000, Math.min(1000, data.scoreCp));
-        percentage = 50 + (clamped / 20); // Maps -1000 to 0%, +1000 to 100%
-    }
-    evalFill.style.height = `${percentage}%`;
-
-    // Render PV Line
-    if (data.pv && data.pv.length > 0) {
-        pvContainer.innerHTML = '';
-        data.pv.forEach(move => {
-            const badge = document.createElement('span');
-            badge.className = 'px-2.5 py-1 bg-slate-800 border border-slate-700 rounded text-sm font-semibold text-slate-300';
-            badge.textContent = `Col ${move}`;
-            pvContainer.appendChild(badge);
-        });
+function updateEvalBar(info) {
+    let winChance = 0.5; 
+    if (info.scoreType === 'mate') {
+        winChance = info.scoreValue > 0 ? 1.0 : 0.0;
     } else {
-        pvContainer.textContent = '-';
+        winChance = 1 / (1 + Math.pow(10, -info.scoreValue / 400));
     }
+
+    const isP1Turn = (viewMoves.length % 2 === 0);
+    const finalWinChance = isP1Turn ? winChance : (1 - winChance);
+
+    const heightPercentage = Math.max(0, Math.min(100, finalWinChance * 100));
+    evalFill.style.height = `${heightPercentage}%`;
+
+    let displayScore = '';
+    if (info.scoreType === 'mate') {
+        let absoluteMate = isP1Turn ? info.scoreValue : -info.scoreValue;
+        displayScore = absoluteMate > 0 ? `M${absoluteMate}` : `-M${Math.abs(absoluteMate)}`;
+    } else {
+        let absoluteCP = isP1Turn ? info.scoreValue : -info.scoreValue;
+        displayScore = (absoluteCP > 0 ? '+' : '') + (absoluteCP / 100).toFixed(1);
+    }
+    evalText.textContent = displayScore;
 }
 
-function updateHistoryUI() {
-    moveHistoryTree.innerHTML = '';
-    
-    for (let i = 0; i < gameHistory.length; i += 2) {
-        const row = document.createElement('div');
-        row.className = 'grid grid-cols-3 gap-2 px-2 py-1 text-sm border-b border-slate-800/50 hover:bg-slate-800/20';
-        
-        const turnLabel = document.createElement('span');
-        turnLabel.className = 'text-slate-500 font-medium';
-        turnLabel.textContent = `${Math.floor(i / 2) + 1}.`;
-
-        const move1 = createHistoryBtn(gameHistory[i], i);
-        let move2 = null;
-        if (i + 1 < gameHistory.length) {
-            move2 = createHistoryBtn(gameHistory[i + 1], i + 1);
-        }
-
-        row.appendChild(turnLabel);
-        row.appendChild(move1);
-        if (move2) row.appendChild(move2);
-        
-        moveHistoryTree.appendChild(row);
-    }
-    moveHistoryTree.scrollTop = moveHistoryTree.scrollHeight;
-}
-
-function createHistoryBtn(col, index) {
-    const btn = document.createElement('button');
-    btn.className = 'w-8 text-center bg-slate-700/80 hover:bg-slate-600 rounded text-slate-300';
-    btn.textContent = col;
-    btn.onclick = () => {
-        gameHistory = gameHistory.slice(0, index + 1);
-        renderState();
-        updateHistoryUI();
-        requestAnalysis();
-    };
-    return btn;
-}
-
-// Event Listeners for Controls
-document.getElementById('btn-undo').addEventListener('click', () => {
-    if (gameHistory.length > 0) {
-        gameHistory.pop();
-        renderState();
-        updateHistoryUI();
-        requestAnalysis();
-    }
-});
-
-document.getElementById('btn-reset').addEventListener('click', () => {
-    gameHistory = [];
-    renderState();
-    updateHistoryUI();
-    requestAnalysis();
-});
-
-document.getElementById('engine-toggle').addEventListener('change', (e) => {
+document.getElementById('btn-flip').onclick = () => { flipped = !flipped; renderBoard(); };
+document.getElementById('btn-undo').onclick = () => {
+    if (currentMoves.length > 0) { currentMoves.pop(); viewMoves = [...currentMoves]; renderBoard(); }
+};
+document.getElementById('btn-reset').onclick = () => { currentMoves = []; viewMoves = []; renderBoard(); };
+toggleEngineBtn.onchange = (e) => {
     engineEnabled = e.target.checked;
-    if (engineEnabled) {
-        requestAnalysis();
+    const status = document.getElementById('engine-status');
+    if (!engineEnabled) {
+        send_uci_command('stop');
+        status.textContent = 'Engine Stopped';
+        status.className = "px-3 py-1 rounded-full bg-gray-700 text-gray-300 text-xs font-bold uppercase tracking-wide";
     } else {
-        worker.postMessage({ cmd: 'stop' });
-        statDepth.textContent = '-';
-        statNps.textContent = '-';
-        evalScore.textContent = '0.0';
-        pvContainer.textContent = 'Analysis Paused';
-        evalFill.style.height = '50%';
+        status.className = "px-3 py-1 rounded-full bg-green-900 text-green-300 text-xs font-bold uppercase tracking-wide";
+        triggerEngine();
     }
-});
+};
 
-// App Startup
-createGrid();
-renderState();
+initBoard();
