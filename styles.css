@@ -1,0 +1,89 @@
+/* Connect 4 Cell styling */
+.c4-cell {
+    width: 3.5rem;
+    height: 3.5rem;
+    background-color: #111827; /* Dark background matching the app */
+    border-radius: 50%;
+    box-shadow: inset 0 4px 6px rgba(0,0,0,0.6);
+    position: relative;
+    overflow: hidden;
+}
+
+/* Tokens */
+.token {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+.token.p1 {
+    background: radial-gradient(circle at 30% 30%, #fde047, #ca8a04);
+    box-shadow: 0 4px 4px rgba(0,0,0,0.3);
+}
+
+.token.p2 {
+    background: radial-gradient(circle at 30% 30%, #f87171, #b91c1c);
+    box-shadow: 0 4px 4px rgba(0,0,0,0.3);
+}
+
+/* Falling Animation */
+@keyframes drop {
+    0% { transform: translateY(-300px); opacity: 0; }
+    60% { transform: translateY(10px); opacity: 1; }
+    80% { transform: translateY(-5px); }
+    100% { transform: translateY(0); }
+}
+
+.token-drop {
+    animation: drop 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+/* Hover indicators for interactive columns */
+.col-interactive {
+    cursor: pointer;
+    border-radius: 999px;
+    transition: background-color 0.2s;
+}
+
+.col-interactive:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.col-interactive:hover .c4-cell.empty.preview-target::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    border-radius: 50%;
+    opacity: 0.4;
+}
+
+.col-interactive.hover-p1:hover .c4-cell.empty.preview-target::after {
+    background: #ca8a04;
+}
+
+.col-interactive.hover-p2:hover .c4-cell.empty.preview-target::after {
+    background: #b91c1c;
+}
+
+/* Move History Badge Styles */
+.move-badge {
+    padding: 0.15rem 0.4rem;
+    border-radius: 0.25rem;
+    background-color: #374151;
+    color: #d1d5db;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.move-badge:hover {
+    background-color: #4b5563;
+}
+
+.move-badge.active {
+    background-color: #3b82f6;
+    color: #ffffff;
+    font-weight: bold;
+}
