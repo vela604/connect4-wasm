@@ -1,262 +1,478 @@
+// ============================================================
+// Connect-4 Analysis Board — main thread
+//
+// Owns all game/UI state and talks to the engine exclusively
+// through engine-worker.js (a Web Worker) via postMessage, so
+// the "go infinite" search never blocks rendering or input.
+//
+// Column convention matches the C++ engine's bitboard.h exactly:
+// columns are 0-6, row 0 is the bottom row. The move list sent to
+// the engine ("position startpos moves 3 4 2 ...") is just the
+// space-joined column sequence — identical to what UCI::cmd_position
+// / apply_moves() parses.
+// ============================================================
+
 const ROWS = 6;
 const COLS = 7;
-let currentMoves = [];
-let viewMoves = [];
+
+// ---------- game state ----------
+let moves = [];        // full played sequence (branch is truncated on new move)
+let viewPly = 0;        // 0..moves.length — which position is currently displayed
 let flipped = false;
-let engineEnabled = true;
-let engineIsReady = false;
+let engineOn = true;
+let hoverCol = null;
+let currentHeights = Array(COLS).fill(0);
+let currentSearchPly = 0; // which viewPly the last 'position' sent to the engine corresponds to
 
-// 1. SETUP EMSCRIPTEN MODULE
-var Module = {
-    print: function(text) {
-        parseEngineOutput(text);
-    },
-    printErr: function(text) {
-        // Agar error dekhna ho to console me aayega
-        console.warn("Engine Info:", text);
-    },
-    onRuntimeInitialized: function() {
-        console.log("WASM Engine Loaded!");
-        engineIsReady = true;
-        
-        // FIX 1: Prevent Thread Deadlock by limiting to 1 thread in browser
-        send_uci_command('setoption name Threads value 1');
+// ---------- engine bridge state ----------
+let worker = null;
+let usingMock = false;
+let mockTimer = null;
 
-        const status = document.getElementById('engine-status');
-        status.textContent = 'Engine Ready';
-        status.classList.replace('bg-red-900', 'bg-green-900');
-        status.classList.replace('text-red-300', 'text-green-300');
-    }
+// ---------- DOM refs ----------
+const el = {
+  boardGrid: document.getElementById('boardGrid'),
+  columnOverlay: document.getElementById('columnOverlay'),
+  boardGridWrap: document.querySelector('.board-grid-wrap'),
+  resultBanner: document.getElementById('resultBanner'),
+  chipP1: document.getElementById('chipP1'),
+  chipP2: document.getElementById('chipP2'),
+  evalFill: document.getElementById('evalFill'),
+  evalLabel: document.getElementById('evalLabel'),
+  evalDepthCaption: document.getElementById('evalDepthCaption'),
+  statDepth: document.getElementById('statDepth'),
+  statScore: document.getElementById('statScore'),
+  statNodes: document.getElementById('statNodes'),
+  statNps: document.getElementById('statNps'),
+  depthBar: document.getElementById('depthBar'),
+  pvLine: document.getElementById('pvLine'),
+  historyList: document.getElementById('historyList'),
+  logBox: document.getElementById('logBox'),
+  statusLed: document.getElementById('statusLed'),
+  statusText: document.getElementById('statusText'),
+  mockBannerWrap: document.getElementById('mockBannerWrap'),
+  engineToggle: document.getElementById('engineToggle'),
+  btnFlip: document.getElementById('btnFlip'),
+  btnUndo: document.getElementById('btnUndo'),
+  btnReset: document.getElementById('btnReset'),
 };
 
-function send_uci_command(cmd) {
-    if (engineIsReady && Module.ccall) {
-        Module.ccall('send_uci_command', 'void', ['string'], [cmd]);
-    }
+let ghostEl = null;
+
+// ============================================================
+// Board helpers (pure functions over the move list)
+// ============================================================
+
+function boardFromMoves(list) {
+  const board = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+  const heights = Array(COLS).fill(0);
+  let lastPos = null;
+  for (let i = 0; i < list.length; i++) {
+    const col = list[i];
+    const row = heights[col];
+    if (row >= ROWS) continue; // defensive; shouldn't happen with valid input
+    board[row][col] = (i % 2 === 0) ? 1 : 2;
+    heights[col]++;
+    lastPos = { row, col };
+  }
+  return { board, heights, lastPos };
 }
 
-// FIX 2: More robust parser that doesn't crash if 'pv' is missing
-function parseEngineOutput(line) {
-    // Ye line aapko browser console me dikhayegi ki C++ engine kya data bhej raha hai
-    console.log("ENGINE SAYS:", line); 
-
-    if (!line.startsWith("info ")) return;
-
-    // Flexible extraction: Agar koi ek cheez missing bhi ho, to regex crash nahi hoga
-    let depthMatch = line.match(/depth (\d+)/);
-    let nodesMatch = line.match(/nodes (\d+)/);
-    let scoreMatch = line.match(/score (cp|mate) ([\-\d]+)/);
-    let pvMatch = line.match(/pv ([\d\s]+)/);
-
-    if (depthMatch && nodesMatch && scoreMatch) {
-        const payload = {
-            depth: parseInt(depthMatch[1], 10),
-            nodes: parseInt(nodesMatch[1], 10),
-            nps: 0,
-            scoreType: scoreMatch[1],
-            scoreValue: parseInt(scoreMatch[2], 10),
-            // Agar PV mile to list banayein, warna safely empty array chhod dein
-            pv: pvMatch ? pvMatch[1].trim().split(' ').map(Number) : []
-        };
-        updateAnalyticsPanel(payload);
-        updateEvalBar(payload);
-    }
-}
-
-
-// --- Niche ka pura UI logic SAME rahega ---
-
-const gridEl = document.getElementById('grid');
-const evalFill = document.getElementById('eval-fill');
-const evalText = document.getElementById('eval-text');
-const historyEl = document.getElementById('move-history');
-const toggleEngineBtn = document.getElementById('toggle-engine');
-
-function initBoard() {
-    gridEl.innerHTML = '';
+function checkWinner(board) {
+  const dirs = [[0, 1], [1, 0], [1, 1], [1, -1]];
+  for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
-        const colDiv = document.createElement('div');
-        colDiv.className = 'col-interactive flex flex-col gap-2 py-1';
-        colDiv.dataset.col = c;
-        for (let r = ROWS - 1; r >= 0; r--) {
-            const cell = document.createElement('div');
-            cell.className = 'c4-cell empty';
-            cell.id = `cell-${c}-${r}`;
-            colDiv.appendChild(cell);
+      const v = board[r][c];
+      if (!v) continue;
+      for (const [dr, dc] of dirs) {
+        let count = 1;
+        for (let k = 1; k < 4; k++) {
+          const rr = r + dr * k, cc = c + dc * k;
+          if (rr < 0 || rr >= ROWS || cc < 0 || cc >= COLS || board[rr][cc] !== v) break;
+          count++;
         }
-        colDiv.addEventListener('click', () => handleMove(c));
-        gridEl.appendChild(colDiv);
+        if (count >= 4) return v;
+      }
     }
-    renderBoard();
+  }
+  return 0;
 }
 
-function getBoardState(moves) {
-    let state = Array.from({ length: COLS }, () => []);
-    moves.forEach((col, idx) => {
-        const player = (idx % 2 === 0) ? 'p1' : 'p2';
-        state[col].push(player);
+function sideToMove(ply) { return ply % 2 === 0 ? 1 : 2; }
+
+// ============================================================
+// Rendering
+// ============================================================
+
+function render() {
+  const slice = moves.slice(0, viewPly);
+  const { board, heights, lastPos } = boardFromMoves(slice);
+  currentHeights = heights;
+
+  const winner = checkWinner(board);
+  const isDraw = !winner && slice.length === ROWS * COLS;
+  const gameOver = !!winner || isDraw;
+
+  renderBoard(board, lastPos);
+  renderOverlay(heights, gameOver);
+  renderBanner(winner, isDraw);
+  renderChips(slice.length, gameOver);
+  renderHistory();
+  hideGhost();
+}
+
+function renderBoard(board, lastPos) {
+  el.boardGrid.innerHTML = '';
+  const colOrder = flipped ? [6, 5, 4, 3, 2, 1, 0] : [0, 1, 2, 3, 4, 5, 6];
+
+  for (let displayRow = 0; displayRow < ROWS; displayRow++) {
+    const realRow = (ROWS - 1) - displayRow; // top of screen = highest row index
+    for (const realCol of colOrder) {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      const v = board[realRow][realCol];
+      if (v) {
+        const piece = document.createElement('div');
+        const isLast = lastPos && lastPos.row === realRow && lastPos.col === realCol;
+        piece.className = `piece p${v}` + (isLast ? '' : ' no-anim');
+        if (isLast) {
+          const rowsFromTop = (ROWS - 1) - realRow;
+          piece.style.setProperty('--fall', `${-(rowsFromTop + 1) * 112}%`);
+        }
+        cell.appendChild(piece);
+      }
+      el.boardGrid.appendChild(cell);
+    }
+  }
+}
+
+function renderOverlay(heights, gameOver) {
+  el.columnOverlay.innerHTML = '';
+  const colOrder = flipped ? [6, 5, 4, 3, 2, 1, 0] : [0, 1, 2, 3, 4, 5, 6];
+  for (const realCol of colOrder) {
+    const full = heights[realCol] >= ROWS;
+    const hit = document.createElement('div');
+    hit.className = 'col-hit' + (full || gameOver ? ' full' : '');
+    hit.dataset.col = String(realCol);
+    hit.addEventListener('mouseenter', () => {
+      if (!full && !gameOver) showGhost(realCol);
     });
-    return state;
-}
-
-function renderBoard(animateLast = false) {
-    const state = getBoardState(viewMoves);
-    const currentPlayer = (viewMoves.length % 2 === 0) ? 'hover-p1' : 'hover-p2';
-
-    document.querySelectorAll('.col-interactive').forEach(col => {
-        col.classList.remove('hover-p1', 'hover-p2');
-        col.classList.add(currentPlayer);
+    hit.addEventListener('mouseleave', hideGhost);
+    hit.addEventListener('click', () => {
+      if (!full && !gameOver) playMove(realCol);
     });
-
-    for (let c = 0; c < COLS; c++) {
-        const colState = state[c];
-        const actualCol = flipped ? (COLS - 1 - c) : c;
-        const colDiv = document.querySelector(`.col-interactive[data-col="${actualCol}"]`);
-        
-        colDiv.querySelectorAll('.c4-cell').forEach(cell => {
-            cell.innerHTML = '';
-            cell.classList.add('empty');
-            cell.classList.remove('preview-target');
-        });
-
-        for (let r = 0; r < colState.length; r++) {
-            const cell = colDiv.querySelector(`#cell-${actualCol}-${r}`);
-            cell.classList.remove('empty');
-            const token = document.createElement('div');
-            token.className = `token ${colState[r]}`;
-            if (animateLast && c === viewMoves[viewMoves.length - 1] && r === colState.length - 1) {
-                token.classList.add('token-drop');
-            }
-            cell.appendChild(token);
-        }
-
-        if (colState.length < ROWS) {
-            const previewCell = colDiv.querySelector(`#cell-${actualCol}-${colState.length}`);
-            if (previewCell) previewCell.classList.add('preview-target');
-        }
-    }
-    renderHistory();
-    triggerEngine();
+    el.columnOverlay.appendChild(hit);
+  }
 }
 
-function handleMove(logicalCol) {
-    const col = flipped ? (COLS - 1 - logicalCol) : logicalCol;
-    const state = getBoardState(viewMoves);
-    if (state[col].length >= ROWS) return; 
+function showGhost(realCol) {
+  if (!ghostEl) {
+    ghostEl = document.createElement('div');
+    ghostEl.className = 'piece ghost no-anim';
+    ghostEl.style.position = 'absolute';
+    el.boardGridWrap.appendChild(ghostEl);
+  }
+  const landingRow = currentHeights[realCol];
+  if (landingRow >= ROWS) { hideGhost(); return; }
+  const displayCol = flipped ? (6 - realCol) : realCol;
+  const displayRowFromTop = (ROWS - 1) - landingRow;
+  const cw = 100 / COLS, ch = 100 / ROWS;
+  ghostEl.style.left = `${displayCol * cw}%`;
+  ghostEl.style.top = `${displayRowFromTop * ch}%`;
+  ghostEl.style.width = `${cw}%`;
+  ghostEl.style.height = `${ch}%`;
+  ghostEl.className = `piece ghost no-anim p${sideToMove(viewPly)}`;
+  ghostEl.style.display = 'block';
+}
 
-    if (viewMoves.length < currentMoves.length) {
-        currentMoves = currentMoves.slice(0, viewMoves.length);
-    }
+function hideGhost() {
+  if (ghostEl) ghostEl.style.display = 'none';
+  hoverCol = null;
+}
 
-    currentMoves.push(col);
-    viewMoves = [...currentMoves];
-    renderBoard(true);
+function renderBanner(winner, isDraw) {
+  const b = el.resultBanner;
+  if (winner) {
+    b.className = 'result-banner show ' + (winner === 1 ? 'win' : 'loss');
+    b.textContent = `Player ${winner} wins!`;
+  } else if (isDraw) {
+    b.className = 'result-banner show draw';
+    b.textContent = "It's a draw.";
+  } else {
+    b.className = 'result-banner';
+    b.textContent = '';
+  }
+}
+
+function renderChips(plyCount, gameOver) {
+  const active = gameOver ? 0 : sideToMove(plyCount);
+  el.chipP1.classList.toggle('active', active === 1);
+  el.chipP2.classList.toggle('active', active === 2);
 }
 
 function renderHistory() {
-    historyEl.innerHTML = '';
-    currentMoves.forEach((col, idx) => {
-        const badge = document.createElement('span');
-        badge.className = `move-badge ${idx < viewMoves.length ? 'active' : ''}`;
-        const plyText = (idx % 2 === 0) ? `${(idx/2)+1}. ` : '';
-        badge.textContent = `${plyText}${col}`;
-        badge.onclick = () => {
-            viewMoves = currentMoves.slice(0, idx + 1);
-            renderBoard(false);
-        };
-        historyEl.appendChild(badge);
-    });
-    historyEl.scrollTop = historyEl.scrollHeight;
+  const list = el.historyList;
+  list.innerHTML = '';
+
+  const startRow = document.createElement('div');
+  startRow.className = 'history-row' + (viewPly === 0 ? ' active' : '');
+  startRow.innerHTML = `<span class="ply">–</span><span>Start position</span>`;
+  startRow.addEventListener('click', () => goToPly(0));
+  list.appendChild(startRow);
+
+  moves.forEach((col, i) => {
+    const ply = i + 1;
+    const mover = i % 2 === 0 ? 1 : 2;
+    const row = document.createElement('div');
+    row.className = 'history-row' + (viewPly === ply ? ' active' : '');
+    row.innerHTML = `<span class="ply">${ply}.</span><span class="dot p${mover}"></span><span>Column ${col}</span>`;
+    row.addEventListener('click', () => goToPly(ply));
+    list.appendChild(row);
+  });
 }
 
-function triggerEngine() {
-    if (!engineEnabled || !engineIsReady) return;
-    const status = document.getElementById('engine-status');
-    status.textContent = 'Thinking...';
-    status.classList.replace('bg-green-900', 'bg-yellow-900');
-    status.classList.replace('text-green-300', 'text-yellow-300');
-    
-    send_uci_command('stop');
-    
-    // Thoda sa delay de rahe hain taaki pichla search proper exit ho jaye aur memory conflict na ho
-    setTimeout(() => {
-        let moveString = viewMoves.join(' ');
-        let positionCommand = moveString ? `position startpos moves ${moveString}` : `position startpos`;
-        send_uci_command(positionCommand);
-        send_uci_command('go infinite');
-    }, 50);
+// ============================================================
+// Game actions
+// ============================================================
+
+function playMove(col) {
+  if (viewPly < moves.length) moves = moves.slice(0, viewPly); // branch: discard redone future
+  moves.push(col);
+  viewPly = moves.length;
+  render();
+  requestEngineAnalysis();
 }
 
-function updateAnalyticsPanel(info) {
-    document.getElementById('stat-depth').textContent = info.depth;
-    document.getElementById('stat-nodes').textContent = info.nodes.toLocaleString();
-    
-    let scoreText = '';
-    const isP1Turn = (viewMoves.length % 2 === 0);
-    if (info.scoreType === 'mate') {
-        let absoluteMate = isP1Turn ? info.scoreValue : -info.scoreValue;
-        scoreText = absoluteMate > 0 ? `M${absoluteMate}` : `-M${Math.abs(absoluteMate)}`;
-    } else {
-        let absoluteCP = isP1Turn ? info.scoreValue : -info.scoreValue;
-        scoreText = (absoluteCP > 0 ? '+' : '') + (absoluteCP / 100).toFixed(2);
-    }
-    document.getElementById('stat-score').textContent = scoreText;
-
-    const pvContainer = document.getElementById('stat-pv');
-    pvContainer.innerHTML = '';
-    info.pv.forEach(move => {
-        const m = document.createElement('span');
-        m.className = 'bg-blue-900 text-blue-100 px-1 rounded mx-1';
-        m.textContent = move;
-        pvContainer.appendChild(m);
-    });
+function goToPly(ply) {
+  viewPly = Math.max(0, Math.min(moves.length, ply));
+  render();
+  requestEngineAnalysis();
 }
 
-function updateEvalBar(info) {
-    let winChance = 0.5; 
-    if (info.scoreType === 'mate') {
-        winChance = info.scoreValue > 0 ? 1.0 : 0.0;
-    } else {
-        winChance = 1 / (1 + Math.pow(10, -info.scoreValue / 400));
-    }
-
-    const isP1Turn = (viewMoves.length % 2 === 0);
-    const finalWinChance = isP1Turn ? winChance : (1 - winChance);
-
-    const heightPercentage = Math.max(0, Math.min(100, finalWinChance * 100));
-    evalFill.style.height = `${heightPercentage}%`;
-
-    let displayScore = '';
-    if (info.scoreType === 'mate') {
-        let absoluteMate = isP1Turn ? info.scoreValue : -info.scoreValue;
-        displayScore = absoluteMate > 0 ? `M${absoluteMate}` : `-M${Math.abs(absoluteMate)}`;
-    } else {
-        let absoluteCP = isP1Turn ? info.scoreValue : -info.scoreValue;
-        displayScore = (absoluteCP > 0 ? '+' : '') + (absoluteCP / 100).toFixed(1);
-    }
-    evalText.textContent = displayScore;
+function undoMove() {
+  if (moves.length === 0) return;
+  moves.pop();
+  viewPly = moves.length;
+  render();
+  requestEngineAnalysis();
 }
 
-document.getElementById('btn-flip').onclick = () => { flipped = !flipped; renderBoard(); };
-document.getElementById('btn-undo').onclick = () => {
-    if (currentMoves.length > 0) { currentMoves.pop(); viewMoves = [...currentMoves]; renderBoard(); }
-};
-document.getElementById('btn-reset').onclick = () => { 
-    currentMoves = []; viewMoves = []; 
-    // Engine ko reset ke baad dobara trigger karenge empty board par
-    renderBoard(); 
-};
-toggleEngineBtn.onchange = (e) => {
-    engineEnabled = e.target.checked;
-    const status = document.getElementById('engine-status');
-    if (!engineEnabled) {
-        send_uci_command('stop');
-        status.textContent = 'Engine Stopped';
-        status.className = "px-3 py-1 rounded-full bg-gray-700 text-gray-300 text-xs font-bold uppercase tracking-wide";
-    } else {
-        status.className = "px-3 py-1 rounded-full bg-green-900 text-green-300 text-xs font-bold uppercase tracking-wide";
-        triggerEngine();
-    }
-};
+function resetBoard() {
+  moves = [];
+  viewPly = 0;
+  render();
+  requestEngineAnalysis();
+}
 
-initBoard();
+function flipBoard() {
+  flipped = !flipped;
+  render();
+}
+
+function playPvLine(pv, uptoIndex) {
+  const line = pv.slice(0, uptoIndex + 1);
+  moves = moves.slice(0, viewPly).concat(line);
+  viewPly = moves.length;
+  render();
+  requestEngineAnalysis();
+}
+
+// ============================================================
+// Engine bridge (real Wasm worker, or mock fallback)
+// ============================================================
+
+function requestEngineAnalysis() {
+  currentSearchPly = viewPly;
+  clearLiveStats();
+
+  const slice = moves.slice(0, viewPly);
+  const { board } = boardFromMoves(slice);
+  const gameOver = checkWinner(board) || slice.length === ROWS * COLS;
+
+  if (!engineOn || gameOver) {
+    if (usingMock) stopMock(); else worker && worker.postMessage({ cmd: 'stop' });
+    setStatus(engineOn ? 'on' : 'off', gameOver ? 'Game over' : 'Paused');
+    return;
+  }
+
+  if (usingMock) {
+    startMock(slice);
+  } else if (worker) {
+    worker.postMessage({ cmd: 'position', moves: slice });
+    setStatus('busy', 'Searching…');
+  }
+}
+
+function clearLiveStats() {
+  el.statDepth.textContent = '–';
+  el.statScore.textContent = '–';
+  el.statNodes.textContent = '–';
+  el.statNps.textContent = '–';
+  el.depthBar.style.width = '0%';
+  el.pvLine.innerHTML = '';
+}
+
+function onSearchInfo(data, forPly) {
+  if (forPly !== currentSearchPly) return; // stale info from a superseded position
+  setStatus('busy', 'Searching…');
+
+  const side = sideToMove(forPly); // 1 or 2 — whose move the engine is evaluating
+  const sign = side === 1 ? 1 : -1; // flip to Player-1 perspective for the eval bar
+  const scoreP1 = data.scoreCp * sign;
+  const mateP1 = data.mateIn * sign;
+
+  updateEvalUI(scoreP1, mateP1, data.depth);
+
+  el.statDepth.textContent = data.depth;
+  el.statScore.textContent = formatScoreLabel(data.scoreCp, data.mateIn); // engine's own (mover) perspective
+  el.statNodes.textContent = data.nodes.toLocaleString();
+  el.statNps.textContent = data.nps.toLocaleString();
+  el.depthBar.style.width = `${Math.min(100, (data.depth / 42) * 100)}%`;
+  el.evalDepthCaption.textContent = data.depth;
+
+  el.pvLine.innerHTML = '';
+  data.pv.forEach((col, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'pv-chip';
+    chip.textContent = `${i + 1}. col ${col}`;
+    chip.title = 'Play out this predicted line';
+    chip.addEventListener('click', () => playPvLine(data.pv, i));
+    el.pvLine.appendChild(chip);
+  });
+}
+
+function formatScoreLabel(scoreCp, mateIn) {
+  if (mateIn !== 0) return (mateIn > 0 ? 'M' : '-M') + Math.abs(mateIn);
+  const v = (scoreCp / 100).toFixed(1);
+  return (scoreCp >= 0 ? '+' : '') + v;
+}
+
+function updateEvalUI(scoreP1, mateP1, depth) {
+  let pct, label;
+  if (mateP1 !== 0) {
+    pct = mateP1 > 0 ? 100 : 0;
+    label = (mateP1 > 0 ? 'M' : '-M') + Math.abs(mateP1);
+  } else {
+    pct = 50 + 50 * Math.tanh(scoreP1 / 450);
+    label = formatScoreLabel(scoreP1, 0);
+  }
+  el.evalFill.style.height = `${pct}%`;
+  const labelTop = Math.min(92, Math.max(4, 100 - pct));
+  el.evalLabel.style.top = `${labelTop}%`;
+  el.evalLabel.style.color = pct < 50 ? '#e9ecf4' : '#0a0c11';
+  el.evalLabel.textContent = label;
+}
+
+function setStatus(state, text) {
+  el.statusLed.className = 'status-led ' + (state === 'busy' ? 'busy' : state === 'on' ? 'on' : 'off');
+  el.statusText.textContent = text || (state === 'busy' ? 'Searching…' : state === 'on' ? 'Ready' : 'Idle');
+}
+
+function appendLog(text) {
+  const line = document.createElement('div');
+  line.textContent = text;
+  el.logBox.prepend(line);
+  while (el.logBox.children.length > 60) el.logBox.removeChild(el.logBox.lastChild);
+}
+
+// ---------- real worker wiring ----------
+
+function initWorker() {
+  worker = new Worker('engine-worker.js');
+  worker.onmessage = (e) => {
+    const { type, data } = e.data;
+    switch (type) {
+      case 'engine_ready':
+        setStatus('on', 'Engine ready');
+        appendLog('[engine] ready');
+        requestEngineAnalysis();
+        break;
+      case 'engine_missing':
+        appendLog('[engine] connect4.js not found — falling back to mock engine');
+        switchToMock();
+        break;
+      case 'search_info':
+        onSearchInfo(data, currentSearchPly);
+        break;
+      case 'bestmove':
+        appendLog(`bestmove ${data === null ? 'none' : data}`);
+        break;
+      case 'log':
+        appendLog(data);
+        break;
+      default:
+        break;
+    }
+  };
+  worker.onerror = (err) => {
+    appendLog('[worker error] ' + err.message);
+    switchToMock();
+  };
+  worker.postMessage({ cmd: 'init' });
+  setStatus('off', 'Connecting to engine…');
+}
+
+// ---------- mock fallback (so the dashboard works before connect4.js is built) ----------
+
+function switchToMock() {
+  usingMock = true;
+  el.mockBannerWrap.style.display = 'block';
+  setStatus('on', 'Mock engine ready');
+  requestEngineAnalysis();
+}
+
+function seedFromMoves(list) {
+  let h = 17;
+  for (const c of list) h = (h * 31 + c + 7) % 100000;
+  return h;
+}
+
+function stopMock() {
+  if (mockTimer) { clearInterval(mockTimer); mockTimer = null; }
+}
+
+function startMock(slice) {
+  stopMock();
+  const seed = seedFromMoves(slice);
+  const side = sideToMove(slice.length);
+  let baseScore = ((seed % 700) - 350) * (side === 1 ? 1 : 1); // mover-perspective baseline
+  let depth = 1;
+  let nodes = 0;
+  const searchPlyAtStart = viewPly;
+
+  mockTimer = setInterval(() => {
+    if (searchPlyAtStart !== viewPly) { stopMock(); return; }
+    depth = Math.min(34, depth + 1);
+    nodes += Math.floor(8000 + Math.random() * 40000 * depth);
+    const wobble = (Math.random() - 0.5) * (260 / depth);
+    const scoreCp = Math.round(baseScore + wobble);
+    const nps = Math.floor(350000 + Math.random() * 400000);
+    const pv = Array.from({ length: Math.min(6, depth) }, () => Math.floor(Math.random() * COLS));
+    let mateIn = 0;
+    if (depth >= 30 && Math.abs(scoreCp) > 300 && Math.random() < 0.15) {
+      mateIn = (scoreCp > 0 ? 1 : -1) * (Math.floor(Math.random() * 6) + 1);
+    }
+    onSearchInfo({ depth, scoreCp: mateIn ? 0 : scoreCp, mateIn, nodes, nps, timeMs: depth * 90, pv }, searchPlyAtStart);
+    if (depth >= 34) stopMock();
+  }, 320);
+}
+
+// ============================================================
+// Controls
+// ============================================================
+
+el.btnFlip.addEventListener('click', flipBoard);
+el.btnUndo.addEventListener('click', undoMove);
+el.btnReset.addEventListener('click', resetBoard);
+el.engineToggle.addEventListener('click', () => {
+  engineOn = !engineOn;
+  el.engineToggle.classList.toggle('on', engineOn);
+  requestEngineAnalysis();
+});
+
+// ============================================================
+// Boot
+// ============================================================
+
+render();
+initWorker();
