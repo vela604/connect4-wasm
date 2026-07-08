@@ -13,7 +13,9 @@ public:
 
     void run();
 
-    // Wasm ke liye in commands ko public kar diya hai
+    // ───────────────────────────────────────────────────────────────────
+    // WEBASSEMBLY/GLUE CODE KE LIYE IN COMMANDS KO PUBLIC KARNA JARURI HAI
+    // ───────────────────────────────────────────────────────────────────
     void cmd_uci();
     void cmd_isready();
     void cmd_ucinewgame();
