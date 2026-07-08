@@ -13,17 +13,13 @@ public:
 
     void run();
 
-    // ───────────────────────────────────────────────────────────────────
-    // Wasm/Emscripten integration ke liye in methods ko public hona zaroori hai
-    // ───────────────────────────────────────────────────────────────────
+    // Wasm ke liye in commands ko public kar diya hai
     void cmd_uci();
     void cmd_isready();
     void cmd_ucinewgame();
     void cmd_position(const std::string& line);
     void cmd_go(const std::string& line);
     void cmd_stop();
-
-private:
     void cmd_quit();
     void cmd_display();
     void cmd_eval();
@@ -32,6 +28,7 @@ private:
     void cmd_move(int col);
     void cmd_setoption(const std::string& line);
 
+private:
     bool apply_moves(const std::string& moves_str);
     bool set_fen(const std::string& fen);
 
