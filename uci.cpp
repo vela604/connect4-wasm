@@ -6,9 +6,9 @@
 #include <cmath>
 #include <algorithm>
 #include <cstring>
-#include <cstdio> // YAHAN ADD KIYA HAI: printf aur fflush ke liye
+#include <cstdio> // printf aur fflush ke liye zaroori
 
-// CLI aesthetics (sirf display() aur terminal mode ke liye, std::cerr par jayega)
+// CLI aesthetics (sirf display() aur terminal mode ke liye)
 #define ANSI_RESET   "\033[0m"
 #define ANSI_BOLD    "\033[1m"
 #define ANSI_RED     "\033[31m"
@@ -32,9 +32,6 @@ UCI::~UCI() {
     if (search_thread_.joinable()) search_thread_.join();
 }
 
-// ─────────────────────────────────────────────
-//  Board printer (CLI mode ke liye - ab cerr use karta hai taaki JS disturb na ho)
-// ─────────────────────────────────────────────
 static void print_board(const Position& pos) {
     BB p1, p2;
     if (pos.side_to_move() == 0) { p1 = pos.current; p2 = pos.opponent(); }
@@ -62,9 +59,6 @@ static void print_board(const Position& pos) {
     std::cerr.flush();
 }
 
-// ─────────────────────────────────────────────
-//  Progress callback — called after each depth
-// ─────────────────────────────────────────────
 void UCI::on_progress(const SearchResult& r, const SearchStats& s) {
     print_info(r, s);
 }
@@ -75,7 +69,6 @@ void UCI::on_progress(const SearchResult& r, const SearchStats& s) {
 void UCI::print_info(const SearchResult& result, const SearchStats& stats) {
     uint64_t nodes = stats.nodes_explored.load();
     
-    // JS Regex is expected to parse exactly this format
     printf("info depth %d nodes %llu nps 0 score ", result.depth, (unsigned long long)nodes);
 
     if (std::abs(result.score) >= MATE_THRESHOLD) {
@@ -91,23 +84,20 @@ void UCI::print_info(const SearchResult& result, const SearchStats& stats) {
     }
 
     printf("\n");
-    fflush(stdout); // SUPER IMPORTANT: Forces WebAssembly to send data to JS immediately!
+    fflush(stdout); // Forces Wasm to send data to JS immediately!
 }
 
 void UCI::print_final_result(const SearchResult& result) {
-    if (result.depth == 0 && result.best_move < 0) return; // Search interrupted
+    if (result.depth == 0 && result.best_move < 0) return; 
 
     if (result.best_move >= 0) {
         printf("bestmove %d\n", result.best_move);
     } else {
         printf("bestmove none\n");
     }
-    fflush(stdout); // SUPER IMPORTANT
+    fflush(stdout); 
 }
 
-// ─────────────────────────────────────────────
-//  Commands
-// ─────────────────────────────────────────────
 void UCI::cmd_uci() {
     printf("id name Connect4-Engine v1.0\n");
     printf("id author Connect4-Engine\n");
@@ -182,16 +172,17 @@ void UCI::cmd_setoption(const std::string& line) {
     }
 }
 
+// BUG 2 FIX: Ab ye function spaced (3 4) aur continuous (34) dono moves ko flawlessly handle karega
 bool UCI::apply_moves(const std::string& moves_str) {
     std::istringstream iss(moves_str);
     std::string token;
     while (iss >> token) {
-        if (token.size() == 1 && token[0] >= '0' && token[0] <= '6') {
-            int col = token[0] - '0';
-            if (!current_pos_.can_play(col)) return false;
-            current_pos_ = current_pos_.after(col);
-        } else {
-            return false;
+        for (char c : token) {
+            if (c >= '0' && c <= '6') {
+                int col = c - '0';
+                if (!current_pos_.can_play(col)) return false;
+                current_pos_ = current_pos_.after(col);
+            }
         }
     }
     return true;
@@ -211,8 +202,10 @@ void UCI::cmd_position(const std::string& line) {
                                        : line.substr(fstart);
         if (!set_fen(fs)) return;
     }
-    if (mp != std::string::npos)
+    
+    if (mp != std::string::npos) {
         apply_moves(line.substr(mp + 7));
+    }
 }
 
 bool UCI::set_fen(const std::string& fen) {
@@ -220,20 +213,28 @@ bool UCI::set_fen(const std::string& fen) {
     std::istringstream iss(fen);
     std::string board_str;
     if (!(iss >> board_str)) return false;
+    
     int row = ROWS - 1, col = 0;
+    int moves_played = 0;
+    
     for (char ch : board_str) {
         if (ch == '/') { --row; col = 0; if (row < 0) break; }
         else if (ch == '.' || ch == '-') { ++col; }
         else if (ch == 'X' || ch == 'x' || ch == '1') {
-            if (row >= 0 && col < COLS)
+            if (row >= 0 && col < COLS) {
                 current_pos_.mask |= BB(1) << (col + row * COLS);
+                moves_played++;
+            }
             ++col;
         } else if (ch == 'O' || ch == 'o' || ch == '2') {
-            if (row >= 0 && col < COLS)
+            if (row >= 0 && col < COLS) {
                 current_pos_.mask |= BB(1) << (col + row * COLS);
+                moves_played++;
+            }
             ++col;
         }
     }
+    current_pos_.moves = moves_played;
     return true;
 }
 
@@ -318,12 +319,13 @@ void UCI::cmd_perft(int depth) {
 }
 
 // ─────────────────────────────────────────────
-//  COMMAND PROCESSOR (For WebAssembly & CLI)
+// BUG 1 FIX: COMMAND PROCESSOR (Crash-Proof Version)
+// .find(cmd) == 0 ka use kiya gaya hai taaki pure string match hone tak 
+// koi out_of_range error throw na ho.
 // ─────────────────────────────────────────────
 void UCI::process_command(const std::string& raw_line) {
     std::string line = raw_line;
     
-    // Trailing spaces ya carriage returns remove karna
     while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
         line.pop_back();
 
@@ -340,21 +342,26 @@ void UCI::process_command(const std::string& raw_line) {
     else if (line == "stop")                   cmd_stop();
     else if (line == "quit" || line == "exit" || line == "q") cmd_quit();
     else if (line == "help" || line == "h")    cmd_help();
-    else if (line.substr(0, 8) == "position")  cmd_position(line);
-    else if (line.substr(0, 9) == "setoption") cmd_setoption(line);
-    else if (line.substr(0, 2) == "go")        cmd_go(line);
-    else if (line.substr(0, 5) == "perft") {
+    
+    // SAFE PREFIX MATCHING
+    else if (line.find("position") == 0)       cmd_position(line);
+    else if (line.find("setoption") == 0)      cmd_setoption(line);
+    else if (line.find("go") == 0)             cmd_go(line);
+    else if (line.find("perft") == 0) {
         std::istringstream iss(line.substr(5));
         int d = 5; iss >> d; cmd_perft(d);
     }
-    else if (line.substr(0, 4) == "move") {
+    else if (line.find("move") == 0) {
         std::istringstream iss(line.substr(4));
         int col = -1; iss >> col; cmd_move(col);
+    }
+    else {
+        std::cerr << "  Unknown command: '" << line << "'\n";
     }
 }
 
 // ─────────────────────────────────────────────
-//  Main CLI loop (Ab sirf native builds ke liye, Wasm isko bypass karta hai)
+//  Main CLI loop (Native build ke liye)
 // ─────────────────────────────────────────────
 void UCI::run() {
     std::cerr << ANSI_BOLD << ANSI_CYAN
@@ -371,8 +378,8 @@ void UCI::run() {
             std::cerr << ANSI_GRAY << "> " << ANSI_RESET;
             std::cerr.flush();
         }
-
         if (!std::getline(std::cin, line)) break;
         process_command(line);
     }
 }
+7
