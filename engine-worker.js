@@ -91,13 +91,29 @@ function loadEngine() {
     },
   };
 
+  // Catch every way this can go wrong: a synchronous throw (e.g. the
+  // file 404s), an async rejection (e.g. the module fails to
+  // instantiate — commonly because the page isn't cross-origin
+  // isolated, so SharedArrayBuffer is unavailable for the pthreads
+  // build), or an uncaught runtime error inside the Wasm glue code.
+  // Any of these now reports 'engine_missing' instead of leaving the
+  // main thread waiting forever with no signal at all.
+  self.addEventListener('error', (e) => {
+    postMessage({ type: 'engine_missing', data: 'worker error: ' + (e.message || e) });
+  });
+  self.addEventListener('unhandledrejection', (e) => {
+    postMessage({ type: 'engine_missing', data: 'unhandled rejection: ' + (e.reason && e.reason.message ? e.reason.message : e.reason) });
+  });
+
   try {
     importScripts('./connect4.js');
     // MODULARIZE=1 + EXPORT_NAME=Connect4Module means connect4.js defines
     // a factory function rather than eagerly creating the module. Pass
     // our overrides in and grab the resolved instance.
     // eslint-disable-next-line no-undef
-    Connect4Module(self.Module).then((m) => { self.Module = m; });
+    Connect4Module(self.Module)
+      .then((m) => { self.Module = m; })
+      .catch((err) => postMessage({ type: 'engine_missing', data: 'module init failed: ' + String(err) }));
   } catch (err) {
     postMessage({ type: 'engine_missing', data: String(err && err.message ? err.message : err) });
   }

@@ -379,16 +379,20 @@ function appendLog(text) {
 
 function initWorker() {
   worker = new Worker('engine-worker.js');
+  let settled = false; // true once we've heard engine_ready or engine_missing
+
   worker.onmessage = (e) => {
     const { type, data } = e.data;
     switch (type) {
       case 'engine_ready':
+        settled = true;
         setStatus('on', 'Engine ready');
         appendLog('[engine] ready');
         requestEngineAnalysis();
         break;
       case 'engine_missing':
-        appendLog('[engine] connect4.js not found — falling back to mock engine');
+        settled = true;
+        appendLog('[engine] connect4.js not found or failed to load — falling back to mock engine (' + data + ')');
         switchToMock();
         break;
       case 'search_info':
@@ -405,11 +409,23 @@ function initWorker() {
     }
   };
   worker.onerror = (err) => {
+    settled = true;
     appendLog('[worker error] ' + err.message);
     switchToMock();
   };
   worker.postMessage({ cmd: 'init' });
   setStatus('off', 'Connecting to engine…');
+
+  // Safety net: if neither 'engine_ready' nor 'engine_missing' arrives
+  // within a few seconds (e.g. the Wasm module hung during a silent
+  // failure this code doesn't otherwise catch), don't leave the UI
+  // stuck forever — fall back to the mock engine automatically.
+  setTimeout(() => {
+    if (!settled) {
+      appendLog('[engine] no response after 7s — falling back to mock engine');
+      switchToMock();
+    }
+  }, 7000);
 }
 
 // ---------- mock fallback (so the dashboard works before connect4.js is built) ----------
