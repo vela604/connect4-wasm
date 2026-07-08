@@ -13,9 +13,7 @@ public:
 
     void run();
 
-    // ───────────────────────────────────────────────────────────────────
-    // WEBASSEMBLY/GLUE CODE KE LIYE IN COMMANDS KO PUBLIC KARNA JARURI HAI
-    // ───────────────────────────────────────────────────────────────────
+private:
     void cmd_uci();
     void cmd_isready();
     void cmd_ucinewgame();
@@ -30,7 +28,6 @@ public:
     void cmd_move(int col);
     void cmd_setoption(const std::string& line);
 
-private:
     bool apply_moves(const std::string& moves_str);
     bool set_fen(const std::string& fen);
 
