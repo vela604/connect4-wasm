@@ -17,20 +17,22 @@ importScripts('engine.js');
 let isSearching = false;
 let startTime = 0;
 
-// Pure JavaScript handling - No Emscripten functions needed!
+// Pure JS method - Kisi Emscripten utility function par depend nahi karta!
 function sendStringCommand(cmdStr) {
-    const encoder = new TextEncoder();
-    const bytes = encoder.encode(cmdStr + '\0'); // Add null-terminator
-    
-    // Allocate heap memory safely
-    const ptr = self.Module._stackAlloc(bytes.length);
-    self.Module.HEAPU8.set(bytes, ptr);
-    
-    // Call the C++ function directly
-    if (typeof self.Module._sendUciCommand === 'function') {
-        self.Module._sendUciCommand(ptr);
-    } else if (typeof _sendUciCommand === 'function') {
-        _sendUciCommand(ptr);
+    if (typeof self.Module.stringToUTF8Array === 'function') {
+        const buffer = [];
+        self.Module.stringToUTF8Array(cmdStr, buffer, 0, cmdStr.length * 4 + 4);
+        
+        const ptr = self.Module._stackAlloc(buffer.length);
+        self.Module.HEAPU8.set(buffer, ptr);
+        
+        if (typeof self.Module._sendUciCommand === 'function') {
+            self.Module._sendUciCommand(ptr);
+        } else if (typeof _sendUciCommand === 'function') {
+            _sendUciCommand(ptr);
+        }
+    } else {
+        console.error("Wasm String converter ready nahi hai.");
     }
 }
 

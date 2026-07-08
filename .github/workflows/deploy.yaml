@@ -1,18 +1,26 @@
-name: Compile C++ to Wasm and Deploy to GitHub Pages
+name: Build and Deploy Connect4 Wasm Engine
 
 on:
   push:
     branches:
-      - main # Agar aapki default branch master hai toh yahan master likhein
+      - main  # Agar aapki branch ka naam 'master' hai toh yahan master kar dena
 
 permissions:
   contents: read
   pages: write
   id-token: write
 
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
 jobs:
   build-and-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+    
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -20,20 +28,20 @@ jobs:
       - name: Setup Emscripten SDK
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: 'latest'
+          version: 3.1.64 # Stable pinned version for reliable compilation
 
-          
-        - name: Compile C++ to WebAssembly (with Multithreading)
-            run: |
-               emcc engine.cpp uci.cpp -std=c++17 -O3 \
-               -s WASM=1 \
-               -s USE_PTHREADS=1 \
-               -s PTHREAD_POOL_SIZE=4 \
-               -s EXPORTED_FUNCTIONS='["_sendUciCommand"]' \
-               --no-entry \
-               -o engine.js
+      - name: Verify Emcc Installation
+        run: emcc -v
 
-
+      - name: Compile C++ to WebAssembly (with Multithreading)
+        run: |
+          emcc engine.cpp uci.cpp -std=c++17 -O3 \
+            -s WASM=1 \
+            -s USE_PTHREADS=1 \
+            -s PTHREAD_POOL_SIZE=4 \
+            -s EXPORTED_FUNCTIONS='["_sendUciCommand"]' \
+            --no-entry \
+            -o engine.js
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
@@ -41,8 +49,8 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Pure project folder ko upload karein jisme ab html, js aur compiled wasm files hain
-          path: '.'
+          path: '.' # Pure project folder ko single site assets ki tarah upload karega
 
       - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
