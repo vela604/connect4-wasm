@@ -538,3 +538,39 @@ void UCI::run() {
     }
     std::cout << "\n  Goodbye!\n";
 }
+// ───────────────────────────────────────────────────────────────────
+//  EMSCRIPTEN GLUE CODE: JS se commands receive karne ke liye
+// ───────────────────────────────────────────────────────────────────
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+
+// Global UCI instance jo worker use karega
+static UCI* g_wasm_uci = nullptr;
+
+extern "C" {
+    // Yeh function hamara JS Worker (ccall ke zariye) direct call karega
+    EMSCRIPTEN_KEEPALIVE
+    void sendUciCommand(const char* cmd_cstr) {
+        if (!g_wasm_uci) {
+            g_wasm_uci = new UCI();
+        }
+        
+        std::string line(cmd_cstr);
+        
+        // Trim trailing spaces or carriage returns
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
+            line.pop_back();
+        }
+        
+        if (line.empty()) return;
+
+        // Route commands directly to UCI class methods
+        if (line == "uci")                    g_wasm_uci->cmd_uci();
+        else if (line == "isready")                g_wasm_uci->cmd_isready();
+        else if (line == "ucinewgame")             g_wasm_uci->cmd_ucinewgame();
+        else if (line == "stop")                   g_wasm_uci->cmd_stop();
+        else if (line.substr(0, 8) == "position")  g_wasm_uci->cmd_position(line);
+        else if (line.substr(0, 2) == "go")        g_wasm_uci->cmd_go(line);
+    }
+}
+#endif
