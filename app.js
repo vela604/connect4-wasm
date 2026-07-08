@@ -425,7 +425,7 @@ function initWorker() {
       appendLog('[engine] no response after 7s — falling back to mock engine');
       switchToMock();
     }
-  }, 7000);
+  }, 70000);
 }
 
 // ---------- mock fallback (so the dashboard works before connect4.js is built) ----------
