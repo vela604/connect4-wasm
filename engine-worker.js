@@ -1,6 +1,6 @@
 // engine-worker.js
 
-// 1. Module define karein bina kisi crash ke
+// 1. Module Configuration
 self.Module = {
     print: function(text) {
         parseEngineOutput(text);
@@ -13,15 +13,36 @@ self.Module = {
     }
 };
 
-// 2. Emscripten background js load karein
+// 2. Load the main Emscripten compiled JS
 importScripts('engine.js');
 
 let isSearching = false;
 let startTime = 0;
 
-// 3. Output Parser (Strictly for your 577-line uci.cpp output syntax)
+// Helper function to safely send string to WebAssembly via pointer
+function sendStringCommand(cmdStr) {
+    if (typeof self.Module._sendUciCommand === 'function') {
+        // Direct WebAssembly export check
+        const length = self.Module.lengthBytesUTF8(cmdStr) + 1;
+        const ptr = self.Module._malloc(length);
+        self.Module.stringToUTF8(cmdStr, ptr, length);
+        self.Module._sendUciCommand(ptr);
+        self.Module._free(ptr);
+    } else if (typeof _sendUciCommand === 'function') {
+        // Fallback context check
+        const length = lengthBytesUTF8(cmdStr) + 1;
+        const ptr = _malloc(length);
+        stringToUTF8(cmdStr, ptr, length);
+        _sendUciCommand(ptr);
+        _free(ptr);
+    } else {
+        console.error("Wasm Command Function not found on Module.");
+    }
+}
+
+// 3. Output Parser (Matches your 577-line uci.cpp formatting structure)
 function parseEngineOutput(line) {
-    const cleanLine = line.replace(/\x1b\[[0-9;]*m/g, ''); // Clear ANSI Colors
+    const cleanLine = line.replace(/\x1b\[[0-9;]*m/g, ''); // Clear ANSI
 
     if (cleanLine.includes('[ d')) {
         const data = {
@@ -35,11 +56,9 @@ function parseEngineOutput(line) {
             pv: []
         };
 
-        // Extract Depth
         const depthMatch = cleanLine.match(/\[ d\s*(\d+)\s*\]/);
         if (depthMatch) data.depth = parseInt(depthMatch[1], 10);
 
-        // Extract Nodes
         const nodesMatch = cleanLine.match(/(\d+)\s*n/);
         if (nodesMatch) {
             data.nodes = parseInt(nodesMatch[1], 10);
@@ -49,13 +68,11 @@ function parseEngineOutput(line) {
             }
         }
 
-        // Extract PV Line
         if (cleanLine.includes('pv')) {
             const pvPart = cleanLine.split('pv')[1].trim();
             data.pv = pvPart.split(/\s+/).map(Number).filter(n => !isNaN(n));
         }
 
-        // Extract Scores (WIN/LOSS/Numeric)
         if (cleanLine.includes('WIN')) {
             const mateMatch = cleanLine.match(/in\s*(\d+)/) || cleanLine.match(/WIN\/(\d+)/);
             data.mateIn = mateMatch ? parseInt(mateMatch[1], 10) : 1;
@@ -94,13 +111,13 @@ function parseEngineOutput(line) {
     }
 }
 
-// 4. Input Commands Router
+// 4. Input Message Listener
 self.onmessage = function(e) {
     const msg = e.data;
 
     if (msg.cmd === 'position') {
         if (isSearching) {
-            self.Module.ccall('sendUciCommand', 'void', ['string'], ['stop']);
+            sendStringCommand('stop');
         }
         
         let uciCmd = 'position startpos';
@@ -108,15 +125,15 @@ self.onmessage = function(e) {
             uciCmd += ' moves ' + msg.moves.join(' ');
         }
         
-        self.Module.ccall('sendUciCommand', 'void', ['string'], [uciCmd]);
+        sendStringCommand(uciCmd);
 
         startTime = Date.now();
         isSearching = true;
-        self.Module.ccall('sendUciCommand', 'void', ['string'], ['go infinite']);
+        sendStringCommand('go infinite');
     } 
     else if (msg.cmd === 'stop') {
         if (isSearching) {
-            self.Module.ccall('sendUciCommand', 'void', ['string'], ['stop']);
+            sendStringCommand('stop');
             isSearching = false;
         }
     }
