@@ -1,0 +1,45 @@
+name: Compile C++ to Wasm and Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main # Agar aapki default branch master hai toh yahan master likhein
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Emscripten SDK
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 'latest'
+
+      - name: Compile C++ to WebAssembly (with Multithreading)
+        run: |
+          emcc engine.cpp uci.cpp -std=c++17 -O3 \
+            -s WASM=1 \
+            -s EXPORTED_RUNTIME_METHODS='["ccall", "cwrap"]' \
+            -s EXIT_RUNTIME=0 \
+            -s PROXY_TO_PTHREAD=1 \
+            -pthread \
+            -o engine.js
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Pure project folder ko upload karein jisme ab html, js aur compiled wasm files hain
+          path: '.'
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
