@@ -27,11 +27,17 @@ worker.onmessage = function(e) {
         engineStatusText.textContent = "Engine Ready";
         engineIndicator.classList.replace('bg-blue-500', 'bg-green-500');
         engineIndicator.classList.remove('animate-pulse');
-        // Analyze starting position
         requestAnalysis();
     } 
     else if (msg.type === 'info' && engineEnabled) {
         updateAnalyticsUI(msg);
+    }
+    else if (msg.type === 'bestmove') {
+        if (msg.move === null) {
+            // Game Over or Interrupted
+            pvContainer.textContent = "Game Finished / Forced Outcome Reached";
+            evalScore.textContent = "Game Over";
+        }
     }
 };
 
@@ -40,147 +46,130 @@ worker.onmessage = function(e) {
 function createGrid() {
     boardContainer.innerHTML = '';
     
-    for (let c = 0; c < COLS; c++) {
-        // Group columns so hovering and clicking is localized to the column
-        const colWrapper = document.createElement('div');
-        colWrapper.className = 'flex flex-col gap-2 col-hover-group cursor-pointer relative';
-        colWrapper.dataset.col = c;
-        
-        // Ghost piece for hover preview
-        const ghost = document.createElement('div');
-        ghost.className = 'w-10 h-10 md:w-12 md:h-12 rounded-full absolute -top-12 left-0 opacity-0 transition-opacity duration-200 preview-piece z-20';
-        ghost.id = `ghost-col-${c}`;
-        colWrapper.appendChild(ghost);
-
-        // Render slots
-        for (let r = ROWS - 1; r >= 0; r--) {
-            const slot = document.createElement('div');
-            slot.className = 'w-10 h-10 md:w-12 md:h-12 rounded-full bg-slate-900 border-[3px] border-blue-800 shadow-inner overflow-hidden relative';
-            slot.id = `slot-${c}-${r}`;
-            colWrapper.appendChild(slot);
-        }
-
-        // Events
-        colWrapper.addEventListener('click', () => handleMove(c));
-        colWrapper.addEventListener('mouseenter', () => updateGhostColor(c));
-        boardContainer.appendChild(colWrapper);
-    }
-    renderState();
-}
-
-function updateGhostColor(col) {
-    const ghost = document.getElementById(`ghost-col-${col}`);
-    const isPlayer1 = (gameHistory.length % 2 === 0);
-    ghost.style.backgroundColor = isPlayer1 ? '#eab308' : '#ef4444'; // Tailwind yellow-500 or red-500
-}
-
-// ─── GAME STATE MANAGEMENT ───────────────────────────────────
-
-// Reconstruct 2D array state from move history
-function computeBoardState() {
-    let state = Array.from({length: COLS}, () => Array(ROWS).fill(0));
-    let player = 1;
-    for (let move of gameHistory) {
-        let row = state[move].indexOf(0);
-        if (row !== -1) {
-            state[move][row] = player;
-            player = player === 1 ? 2 : 1;
+    for (let r = ROWS - 1; r >= 0; r--) {
+        for (let c = 0; c < COLS; c++) {
+            const cell = document.createElement('div');
+            cell.className = 'cell aspect-square bg-slate-900 rounded-full m-1 shadow-inner relative cursor-pointer hover:bg-slate-800 transition-colors duration-150';
+            cell.dataset.row = r;
+            cell.dataset.col = c;
+            cell.onclick = () => handleColumnClick(c);
+            boardContainer.appendChild(cell);
         }
     }
-    return state;
 }
 
-function handleMove(col) {
-    const state = computeBoardState();
-    if (state[col].indexOf(0) === -1) return; // Column is full
+// ─── GAME LOGIC & STATE ──────────────────────────────────────
+
+function getBoardState() {
+    const board = Array(ROWS).fill(null).map(() => Array(COLS).fill(0));
+    const colCounts = Array(COLS).fill(0);
+
+    for (let i = 0; i < gameHistory.length; i++) {
+        const col = gameHistory[i];
+        const row = colCounts[col];
+        if (row < ROWS) {
+            board[row][col] = (i % 2 === 0) ? 1 : 2; // 1 = Yellow (P1), 2 = Red (P2)
+            colCounts[col]++;
+        }
+    }
+    return { board, colCounts };
+}
+
+function handleColumnClick(col) {
+    const { colCounts } = getBoardState();
+    if (colCounts[col] >= ROWS) return; // Column full
 
     gameHistory.push(col);
-    renderState(true, col); // pass true to trigger drop animation
+    renderState();
     updateHistoryUI();
     requestAnalysis();
 }
 
-function renderState(animate = false, lastCol = -1) {
-    const state = computeBoardState();
-    
-    for (let c = 0; c < COLS; c++) {
-        for (let r = 0; r < ROWS; r++) {
-            const slot = document.getElementById(`slot-${c}-${r}`);
-            slot.innerHTML = ''; 
+function renderState() {
+    const { board } = getBoardState();
+    const cells = boardContainer.getElementsByClassName('cell');
 
-            if (state[c][r] !== 0) {
-                const token = document.createElement('div');
-                token.className = `w-full h-full rounded-full shadow-md ${state[c][r] === 1 ? 'bg-yellow-500' : 'bg-red-500'}`;
-                
-                // Add drop animation class to the topmost piece in the column just played
-                if (animate && c === lastCol) {
-                    const topRow = state[c].indexOf(0) === -1 ? ROWS - 1 : state[c].indexOf(0) - 1;
-                    if (r === topRow) {
-                        token.classList.add('piece-drop');
-                    }
+    for (let r = ROWS - 1; r >= 0; r--) {
+        for (let c = 0; c < COLS; c++) {
+            const cellIndex = (ROWS - 1 - r) * COLS + c;
+            const cell = cells[cellIndex];
+            const player = board[r][c];
+
+            // Clear previous piece styling
+            cell.innerHTML = '';
+
+            if (player !== 0) {
+                const piece = document.createElement('div');
+                piece.className = `w-[88%] h-[88%] rounded-full absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 shadow-md animate-drop`;
+                if (player === 1) {
+                    piece.classList.add('bg-amber-400', 'border-2', 'border-amber-500');
+                } else {
+                    piece.classList.add('bg-rose-500', 'border-2', 'border-rose-600');
                 }
-                
-                slot.appendChild(token);
+                cell.appendChild(piece);
             }
         }
-        updateGhostColor(c); 
     }
 }
-
-// ─── ENGINE COMMUNICATION ────────────────────────────────────
 
 function requestAnalysis() {
     if (!engineEnabled) return;
     
-    pvContainer.innerHTML = '<span class="text-slate-400 italic">Calculating...</span>';
-    worker.postMessage({ cmd: 'position', moves: gameHistory });
-}
-
-function updateAnalyticsUI(data) {
-    statDepth.textContent = data.depth;
-    statNodes.textContent = data.nodes.toLocaleString();
-    statNps.textContent = data.nps.toLocaleString();
-    evalScore.textContent = data.scoreText;
+    // Clear old data line instantly so user knows it's reloading
+    pvContainer.textContent = "Calculating...";
     
-    // Eval Bar Physics (Clamp score and convert to percentage)
-    let fill = 50; 
-    if (data.mateIn !== null) {
-        fill = data.mateIn > 0 ? 100 : 0;
-    } else {
-        const clamped = Math.max(-1000, Math.min(1000, data.scoreCp));
-        fill = 50 + (clamped / 1000) * 50; 
-    }
-    
-    evalFill.style.height = `${fill}%`;
-    evalFill.className = `w-full absolute bottom-0 eval-transition ${gameHistory.length % 2 === 1 ? 'bg-slate-900' : 'bg-slate-200'}`;
-    
-    // Render PV Sequence
-    pvContainer.innerHTML = '';
-    data.pv.forEach((move) => {
-        const span = document.createElement('span');
-        span.className = 'px-2 py-0.5 bg-slate-700 rounded cursor-pointer hover:bg-slate-600 transition-colors';
-        span.textContent = move;
-        span.onclick = () => handleMove(move); // Clicking PV plays the move
-        pvContainer.appendChild(span);
+    worker.postMessage({
+        cmd: 'position',
+        moves: gameHistory
     });
 }
 
-// ─── RIGHT PANEL UI LOGIC ────────────────────────────────────
+// ─── UI CONTROLS ─────────────────────────────────────────────
+
+function updateAnalyticsUI(data) {
+    statDepth.textContent = data.depth || '-';
+    statNodes.textContent = data.nodes ? data.nodes.toLocaleString() : '0';
+    statNps.textContent = data.nps ? data.nps.toLocaleString() : '-';
+    evalScore.textContent = data.scoreText || '0.0';
+
+    // Update Eval Bar UI
+    let percentage = 50; // default draw
+    if (data.scoreCp !== undefined) {
+        // Clamp score between -1000 and +1000 centipawns for UI scaling
+        let clamped = Math.max(-1000, Math.min(1000, data.scoreCp));
+        percentage = 50 + (clamped / 20); // Maps -1000 to 0%, +1000 to 100%
+    }
+    evalFill.style.height = `${percentage}%`;
+
+    // Render PV Line
+    if (data.pv && data.pv.length > 0) {
+        pvContainer.innerHTML = '';
+        data.pv.forEach(move => {
+            const badge = document.createElement('span');
+            badge.className = 'px-2.5 py-1 bg-slate-800 border border-slate-700 rounded text-sm font-semibold text-slate-300';
+            badge.textContent = `Col ${move}`;
+            pvContainer.appendChild(badge);
+        });
+    } else {
+        pvContainer.textContent = '-';
+    }
+}
 
 function updateHistoryUI() {
     moveHistoryTree.innerHTML = '';
+    
     for (let i = 0; i < gameHistory.length; i += 2) {
         const row = document.createElement('div');
-        row.className = 'flex gap-2 items-center hover:bg-slate-700/50 p-1 rounded';
+        row.className = 'grid grid-cols-3 gap-2 px-2 py-1 text-sm border-b border-slate-800/50 hover:bg-slate-800/20';
         
         const turnLabel = document.createElement('span');
-        turnLabel.className = 'text-slate-500 w-6 text-right';
-        turnLabel.textContent = `${(i/2)+1}.`;
-        
+        turnLabel.className = 'text-slate-500 font-medium';
+        turnLabel.textContent = `${Math.floor(i / 2) + 1}.`;
+
         const move1 = createHistoryBtn(gameHistory[i], i);
         let move2 = null;
         if (i + 1 < gameHistory.length) {
-            move2 = createHistoryBtn(gameHistory[i+1], i + 1);
+            move2 = createHistoryBtn(gameHistory[i + 1], i + 1);
         }
 
         row.appendChild(turnLabel);
@@ -197,7 +186,6 @@ function createHistoryBtn(col, index) {
     btn.className = 'w-8 text-center bg-slate-700/80 hover:bg-slate-600 rounded text-slate-300';
     btn.textContent = col;
     btn.onclick = () => {
-        // Rollback history
         gameHistory = gameHistory.slice(0, index + 1);
         renderState();
         updateHistoryUI();
@@ -231,10 +219,12 @@ document.getElementById('engine-toggle').addEventListener('change', (e) => {
         worker.postMessage({ cmd: 'stop' });
         statDepth.textContent = '-';
         statNps.textContent = '-';
-        evalScore.textContent = 'OFF';
+        evalScore.textContent = '0.0';
+        pvContainer.textContent = 'Analysis Paused';
         evalFill.style.height = '50%';
     }
 });
 
-// Boot Application
+// App Startup
 createGrid();
+renderState();
