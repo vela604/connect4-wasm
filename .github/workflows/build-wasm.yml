@@ -1,0 +1,41 @@
+name: Build Wasm engine
+
+# Runs on GitHub's server — nothing needs to compile on your phone.
+# Trigger: every push to main that touches the C++ source.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'engine_patch/**'
+      - '.github/workflows/build-wasm.yml'
+  workflow_dispatch: {}   # lets you also click "Run workflow" manually
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+
+      - name: Build connect4.js / connect4.wasm
+        working-directory: engine_patch
+        run: |
+          make web
+
+      - name: Copy build output into the web app folder
+        run: |
+          cp engine_patch/web/connect4.js .
+          cp engine_patch/web/connect4.wasm .
+
+      - name: Commit built files back to the repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add connect4.js connect4.wasm
+          git diff --staged --quiet && echo "No changes" || git commit -m "Rebuild Wasm engine [skip ci]"
+          git push
