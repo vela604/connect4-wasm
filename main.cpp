@@ -3,41 +3,44 @@
 #include <csignal>
 #include <cstdlib>
 
-// Global UCI instance for signal handling (used by SIGINT)
+// Global UCI instance
 static UCI* g_uci = nullptr;
 
-// FIX: was incorrectly calling uci.run() again on signal.
-// Now just prints a message and exits cleanly.
 void signal_handler(int /*sig*/) {
     std::cerr << "\n  [Ctrl+C received — exiting]\n";
     std::exit(0);
 }
 
-int main(int /*argc*/, char* /*argv*/[]) {
-    // Register SIGINT so Ctrl+C gives a clean exit message
-    signal(SIGINT, signal_handler);
-
-    UCI uci;
-    g_uci = &uci;
-    uci.run();
-
-    return 0;
-}
-
-// main.cpp ke end mein add karein
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 
 extern "C" {
-    // Ye function JavaScript call karega
+    // JavaScript direct is function ko call karega
     EMSCRIPTEN_KEEPALIVE
     void send_uci_command(const char* command) {
         if (g_uci) {
-            // Aapko apne uci.h me ek public function banana padega `process_command(std::string cmd)`
-            // jo lines ko waise hi handle kare jaise while(getline) wala loop karta tha.
             g_uci->process_command(std::string(command)); 
         }
     }
 }
 #endif
 
+int main(int /*argc*/, char* /*argv*/[]) {
+    signal(SIGINT, signal_handler);
+
+#ifdef __EMSCRIPTEN__
+    // WebAssembly Mode: 
+    // Isko heap (new) par allocate karenge taaki main() return hone ke baad 
+    // bhi engine memory me zinda rahe aur JS commands receive kar sake.
+    g_uci = new UCI();
+    std::cerr << "Wasm Engine Initialized & Waiting for commands...\n";
+    // YAHAN uci.run() CALL NAHI KARNA HAI. Main function silently exit ho jayega.
+#else
+    // Native CLI Mode (PC/Mac/Linux Terminal ke liye)
+    UCI uci;
+    g_uci = &uci;
+    uci.run(); // Ye apna normal blocking loop chalayega
+#endif
+
+    return 0;
+}
