@@ -539,38 +539,44 @@ void UCI::run() {
     std::cout << "\n  Goodbye!\n";
 }
 // ───────────────────────────────────────────────────────────────────
-//  EMSCRIPTEN GLUE CODE: JS se commands receive karne ke liye
+//  EMSCRIPTEN GLUE CODE: Isse apne purane uci.cpp ke sabse end mein jodein
 // ───────────────────────────────────────────────────────────────────
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 
-// Global UCI instance jo worker use karega
-static UCI* g_wasm_uci = nullptr;
+static UCI* g_wasm_uci_instance = nullptr;
 
 extern "C" {
-    // Yeh function hamara JS Worker (ccall ke zariye) direct call karega
+
     EMSCRIPTEN_KEEPALIVE
     void sendUciCommand(const char* cmd_cstr) {
-        if (!g_wasm_uci) {
-            g_wasm_uci = new UCI();
+        if (!g_wasm_uci_instance) {
+            g_wasm_uci_instance = new UCI();
         }
-        
+
         std::string line(cmd_cstr);
         
-        // Trim trailing spaces or carriage returns
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
+        // Extra spaces aur newlines clean karne ke liye
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\n')) {
             line.pop_back();
         }
-        
+
         if (line.empty()) return;
 
-        // Route commands directly to UCI class methods
-        if (line == "uci")                    g_wasm_uci->cmd_uci();
-        else if (line == "isready")                g_wasm_uci->cmd_isready();
-        else if (line == "ucinewgame")             g_wasm_uci->cmd_ucinewgame();
-        else if (line == "stop")                   g_wasm_uci->cmd_stop();
-        else if (line.substr(0, 8) == "position")  g_wasm_uci->cmd_position(line);
-        else if (line.substr(0, 2) == "go")        g_wasm_uci->cmd_go(line);
+        // Commands ko sahi internal functions par redirect karna
+        if (line == "uci") {
+            g_wasm_uci_instance->cmd_uci();
+        } else if (line == "isready") {
+            g_wasm_uci_instance->cmd_isready();
+        } else if (line == "ucinewgame") {
+            g_wasm_uci_instance->cmd_ucinewgame();
+        } else if (line == "stop") {
+            g_wasm_uci_instance->cmd_stop();
+        } else if (line.rfind("position", 0) == 0) {
+            g_wasm_uci_instance->cmd_position(line);
+        } else if (line.rfind("go", 0) == 0) {
+            g_wasm_uci_instance->cmd_go(line);
+        }
     }
 }
 #endif
