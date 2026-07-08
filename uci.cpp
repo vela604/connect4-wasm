@@ -382,4 +382,3 @@ void UCI::run() {
         process_command(line);
     }
 }
-7
