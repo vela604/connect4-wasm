@@ -1,6 +1,5 @@
 // engine-worker.js
 
-// 1. Module Configuration
 self.Module = {
     print: function(text) {
         parseEngineOutput(text);
@@ -13,36 +12,22 @@ self.Module = {
     }
 };
 
-// 2. Load the main Emscripten compiled JS
 importScripts('engine.js');
 
 let isSearching = false;
 let startTime = 0;
 
-// Helper function to safely send string to WebAssembly via pointer
 function sendStringCommand(cmdStr) {
-    if (typeof self.Module._sendUciCommand === 'function') {
-        // Direct WebAssembly export check
-        const length = self.Module.lengthBytesUTF8(cmdStr) + 1;
-        const ptr = self.Module._malloc(length);
-        self.Module.stringToUTF8(cmdStr, ptr, length);
-        self.Module._sendUciCommand(ptr);
-        self.Module._free(ptr);
-    } else if (typeof _sendUciCommand === 'function') {
-        // Fallback context check
-        const length = lengthBytesUTF8(cmdStr) + 1;
-        const ptr = _malloc(length);
-        stringToUTF8(cmdStr, ptr, length);
-        _sendUciCommand(ptr);
-        _free(ptr);
-    } else {
-        console.error("Wasm Command Function not found on Module.");
-    }
+    // Emscripten helpers ko call karne ka sabse safe tarika
+    const length = (self.Module.lengthBytesUTF8 || lengthBytesUTF8)(cmdStr) + 1;
+    const ptr = (self.Module._malloc || _malloc)(length);
+    (self.Module.stringToUTF8 || stringToUTF8)(cmdStr, ptr, length);
+    (self.Module._sendUciCommand || _sendUciCommand)(ptr);
+    (self.Module._free || _free)(ptr);
 }
 
-// 3. Output Parser (Matches your 577-line uci.cpp formatting structure)
 function parseEngineOutput(line) {
-    const cleanLine = line.replace(/\x1b\[[0-9;]*m/g, ''); // Clear ANSI
+    const cleanLine = line.replace(/\x1b\[[0-9;]*m/g, '');
 
     if (cleanLine.includes('[ d')) {
         const data = {
@@ -63,9 +48,7 @@ function parseEngineOutput(line) {
         if (nodesMatch) {
             data.nodes = parseInt(nodesMatch[1], 10);
             const elapsed = (Date.now() - startTime) / 1000;
-            if (elapsed > 0) {
-                data.nps = Math.round(data.nodes / elapsed);
-            }
+            if (elapsed > 0) data.nps = Math.round(data.nodes / elapsed);
         }
 
         if (cleanLine.includes('pv')) {
@@ -95,7 +78,6 @@ function parseEngineOutput(line) {
                 data.scoreText = (data.scoreCp / 100).toFixed(2);
             }
         }
-
         postMessage(data);
     }
 
@@ -103,7 +85,6 @@ function parseEngineOutput(line) {
         isSearching = false;
         const parts = cleanLine.trim().split(/\s+/);
         const moveStr = parts[1];
-        
         postMessage({
             type: 'bestmove',
             move: moveStr === '(none)' ? null : parseInt(moveStr, 10)
@@ -111,20 +92,15 @@ function parseEngineOutput(line) {
     }
 }
 
-// 4. Input Message Listener
 self.onmessage = function(e) {
     const msg = e.data;
-
     if (msg.cmd === 'position') {
-        if (isSearching) {
-            sendStringCommand('stop');
-        }
+        if (isSearching) sendStringCommand('stop');
         
         let uciCmd = 'position startpos';
         if (msg.moves && msg.moves.length > 0) {
             uciCmd += ' moves ' + msg.moves.join(' ');
         }
-        
         sendStringCommand(uciCmd);
 
         startTime = Date.now();
