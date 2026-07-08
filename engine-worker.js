@@ -1,7 +1,7 @@
 // engine-worker.js
 
-// 1. Emscripten Module Setup
-var Module = {
+// 1. Module define karein bina kisi crash ke
+self.Module = {
     print: function(text) {
         parseEngineOutput(text);
     },
@@ -13,16 +13,16 @@ var Module = {
     }
 };
 
+// 2. Emscripten background js load karein
 importScripts('engine.js');
 
 let isSearching = false;
 let startTime = 0;
 
-// 2. Output Parser (Strictly matched with your uci.cpp layout)
+// 3. Output Parser (Strictly for your 577-line uci.cpp output syntax)
 function parseEngineOutput(line) {
-    const cleanLine = line.replace(/\x1b\[[0-9;]*m/g, ''); // Remove ANSI Colors
+    const cleanLine = line.replace(/\x1b\[[0-9;]*m/g, ''); // Clear ANSI Colors
 
-    // Check for search progress line: "[ d 8 ]"
     if (cleanLine.includes('[ d')) {
         const data = {
             type: 'info',
@@ -35,17 +35,11 @@ function parseEngineOutput(line) {
             pv: []
         };
 
-        // 1. Extract Depth
+        // Extract Depth
         const depthMatch = cleanLine.match(/\[ d\s*(\d+)\s*\]/);
         if (depthMatch) data.depth = parseInt(depthMatch[1], 10);
 
-        // 2. Extract Best Move for this depth (mv:X)
-        const mvMatch = cleanLine.match(/mv:\s*(\d+)/);
-        if (mvMatch) {
-            // Optional: can log it if needed
-        }
-
-        // 3. Extract Nodes (e.g., "    14205n")
+        // Extract Nodes
         const nodesMatch = cleanLine.match(/(\d+)\s*n/);
         if (nodesMatch) {
             data.nodes = parseInt(nodesMatch[1], 10);
@@ -55,13 +49,13 @@ function parseEngineOutput(line) {
             }
         }
 
-        // 4. Extract PV Line (e.g., "pv 3 4 2")
+        // Extract PV Line
         if (cleanLine.includes('pv')) {
             const pvPart = cleanLine.split('pv')[1].trim();
             data.pv = pvPart.split(/\s+/).map(Number).filter(n => !isNaN(n));
         }
 
-        // 5. Extract Score (+WIN, -LOSS, or Numeric Eval)
+        // Extract Scores (WIN/LOSS/Numeric)
         if (cleanLine.includes('WIN')) {
             const mateMatch = cleanLine.match(/in\s*(\d+)/) || cleanLine.match(/WIN\/(\d+)/);
             data.mateIn = mateMatch ? parseInt(mateMatch[1], 10) : 1;
@@ -76,7 +70,6 @@ function parseEngineOutput(line) {
             data.scoreText = '0.0';
             data.scoreCp = 0;
         } else {
-            // Standard score evaluation (+ or - values)
             const scoreMatch = cleanLine.match(/([+-])\s*(\d+)/);
             if (scoreMatch) {
                 const sign = scoreMatch[1];
@@ -89,11 +82,10 @@ function parseEngineOutput(line) {
         postMessage(data);
     }
 
-    // Check for final decision command: "bestmove X" or "bestmove (none)"
     if (cleanLine.includes('bestmove')) {
         isSearching = false;
         const parts = cleanLine.trim().split(/\s+/);
-        const moveStr = parts[1]; // can be a number 0-6 or "(none)"
+        const moveStr = parts[1];
         
         postMessage({
             type: 'bestmove',
@@ -102,13 +94,13 @@ function parseEngineOutput(line) {
     }
 }
 
-// 3. Command Listener
-onmessage = function(e) {
+// 4. Input Commands Router
+self.onmessage = function(e) {
     const msg = e.data;
 
     if (msg.cmd === 'position') {
         if (isSearching) {
-            Module.ccall('sendUciCommand', 'void', ['string'], ['stop']);
+            self.Module.ccall('sendUciCommand', 'void', ['string'], ['stop']);
         }
         
         let uciCmd = 'position startpos';
@@ -116,15 +108,15 @@ onmessage = function(e) {
             uciCmd += ' moves ' + msg.moves.join(' ');
         }
         
-        Module.ccall('sendUciCommand', 'void', ['string'], [uciCmd]);
+        self.Module.ccall('sendUciCommand', 'void', ['string'], [uciCmd]);
 
         startTime = Date.now();
         isSearching = true;
-        Module.ccall('sendUciCommand', 'void', ['string'], ['go infinite']);
+        self.Module.ccall('sendUciCommand', 'void', ['string'], ['go infinite']);
     } 
     else if (msg.cmd === 'stop') {
         if (isSearching) {
-            Module.ccall('sendUciCommand', 'void', ['string'], ['stop']);
+            self.Module.ccall('sendUciCommand', 'void', ['string'], ['stop']);
             isSearching = false;
         }
     }
