@@ -37,11 +37,12 @@ function send_uci_command(cmd) {
 
 // FIX 2: More robust parser that doesn't crash if 'pv' is missing
 function parseEngineOutput(line) {
-    // Agar output dekhna ho ki background me kya chal raha hai, to isse uncomment karein:
-    // console.log("Raw Engine Output:", line);
+    // Ye line aapko browser console me dikhayegi ki C++ engine kya data bhej raha hai
+    console.log("ENGINE SAYS:", line); 
 
-    if (!line.startsWith("info ")) return; // Sirf info wali lines chahiye
+    if (!line.startsWith("info ")) return;
 
+    // Flexible extraction: Agar koi ek cheez missing bhi ho, to regex crash nahi hoga
     let depthMatch = line.match(/depth (\d+)/);
     let nodesMatch = line.match(/nodes (\d+)/);
     let scoreMatch = line.match(/score (cp|mate) ([\-\d]+)/);
@@ -54,13 +55,14 @@ function parseEngineOutput(line) {
             nps: 0,
             scoreType: scoreMatch[1],
             scoreValue: parseInt(scoreMatch[2], 10),
-            // Agar PV mile to array banayein, warna khali chhod dein
+            // Agar PV mile to list banayein, warna safely empty array chhod dein
             pv: pvMatch ? pvMatch[1].trim().split(' ').map(Number) : []
         };
         updateAnalyticsPanel(payload);
         updateEvalBar(payload);
     }
 }
+
 
 // --- Niche ka pura UI logic SAME rahega ---
 

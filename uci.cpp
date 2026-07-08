@@ -6,8 +6,9 @@
 #include <cmath>
 #include <algorithm>
 #include <cstring>
+#include <cstdio> // YAHAN ADD KIYA HAI: printf aur fflush ke liye
 
-// CLI aesthetics (sirf display() aur terminal mode ke liye bache hue hain)
+// CLI aesthetics (sirf display() aur terminal mode ke liye, std::cerr par jayega)
 #define ANSI_RESET   "\033[0m"
 #define ANSI_BOLD    "\033[1m"
 #define ANSI_RED     "\033[31m"
@@ -32,33 +33,33 @@ UCI::~UCI() {
 }
 
 // ─────────────────────────────────────────────
-//  Board printer (CLI mode ke liye)
+//  Board printer (CLI mode ke liye - ab cerr use karta hai taaki JS disturb na ho)
 // ─────────────────────────────────────────────
 static void print_board(const Position& pos) {
     BB p1, p2;
     if (pos.side_to_move() == 0) { p1 = pos.current; p2 = pos.opponent(); }
     else                          { p2 = pos.current; p1 = pos.opponent(); }
 
-    std::cout << "\n" << ANSI_BOLD << "  ╔═══════════════╗\n" << ANSI_RESET;
+    std::cerr << "\n" << ANSI_BOLD << "  ╔═══════════════╗\n" << ANSI_RESET;
     for (int r = ROWS - 1; r >= 0; --r) {
-        std::cout << ANSI_BOLD << "  ║ " << ANSI_RESET;
+        std::cerr << ANSI_BOLD << "  ║ " << ANSI_RESET;
         for (int c = 0; c < COLS; ++c) {
             BB bit = BB(1) << (c + r * COLS);
-            if      (p1 & bit) std::cout << ANSI_YELLOW << ANSI_BOLD << "● " << ANSI_RESET;
-            else if (p2 & bit) std::cout << ANSI_RED    << ANSI_BOLD << "● " << ANSI_RESET;
-            else               std::cout << ANSI_GRAY   << "· "              << ANSI_RESET;
+            if      (p1 & bit) std::cerr << ANSI_YELLOW << ANSI_BOLD << "● " << ANSI_RESET;
+            else if (p2 & bit) std::cerr << ANSI_RED    << ANSI_BOLD << "● " << ANSI_RESET;
+            else               std::cerr << ANSI_GRAY   << "· "              << ANSI_RESET;
         }
-        std::cout << ANSI_BOLD << "║" << ANSI_RESET << "\n";
+        std::cerr << ANSI_BOLD << "║" << ANSI_RESET << "\n";
     }
-    std::cout << ANSI_BOLD << "  ╚═══════════════╝\n" << ANSI_RESET;
-    std::cout << ANSI_CYAN  << "    0 1 2 3 4 5 6\n"  << ANSI_RESET << "\n";
+    std::cerr << ANSI_BOLD << "  ╚═══════════════╝\n" << ANSI_RESET;
+    std::cerr << ANSI_CYAN  << "    0 1 2 3 4 5 6\n"  << ANSI_RESET << "\n";
 
     std::string mover = (pos.side_to_move() == 0)
         ? std::string(ANSI_YELLOW) + "P1 (Yellow ●)" + ANSI_RESET
         : std::string(ANSI_RED)    + "P2 (Red ●)"    + ANSI_RESET;
-    std::cout << "  Move " << ANSI_BOLD << pos.moves << ANSI_RESET
+    std::cerr << "  Move " << ANSI_BOLD << pos.moves << ANSI_RESET
               << "  |  " << mover << " to play\n\n";
-    std::cout.flush();
+    std::cerr.flush();
 }
 
 // ─────────────────────────────────────────────
@@ -68,54 +69,62 @@ void UCI::on_progress(const SearchResult& r, const SearchStats& s) {
     print_info(r, s);
 }
 
-// STRICT UCI FORMAT FOR JAVASCRIPT PARSER (NO ANSI COLORS HERE)
+// ─────────────────────────────────────────────
+//  WASM-SAFE PRINTERS (Uses printf + fflush)
+// ─────────────────────────────────────────────
 void UCI::print_info(const SearchResult& result, const SearchStats& stats) {
     uint64_t nodes = stats.nodes_explored.load();
     
-    // JS Regex is expected to parse exactly this format:
-    // info depth <D> nodes <N> nps <NPS> score <cp/mate> <VAL> pv <M1 M2...>
-    std::cout << "info depth " << result.depth 
-              << " nodes " << nodes 
-              << " nps 0" // Defaulting nps to 0 for now
-              << " score ";
+    // JS Regex is expected to parse exactly this format
+    printf("info depth %d nodes %llu nps 0 score ", result.depth, (unsigned long long)nodes);
 
     if (std::abs(result.score) >= MATE_THRESHOLD) {
         int mate_val = (result.score > 0) ? result.mate_in : -result.mate_in;
-        std::cout << "mate " << mate_val;
+        printf("mate %d", mate_val);
     } else {
-        std::cout << "cp " << result.score;
+        printf("cp %d", result.score);
     }
 
     if (!result.pv.empty()) {
-        std::cout << " pv";
-        for (int c : result.pv) std::cout << " " << c;
+        printf(" pv");
+        for (int c : result.pv) printf(" %d", c);
     }
 
-    std::cout << "\n";
-    std::cout.flush(); // Zaroori hai taaki Web Worker turant message receive kare
+    printf("\n");
+    fflush(stdout); // SUPER IMPORTANT: Forces WebAssembly to send data to JS immediately!
+}
+
+void UCI::print_final_result(const SearchResult& result) {
+    if (result.depth == 0 && result.best_move < 0) return; // Search interrupted
+
+    if (result.best_move >= 0) {
+        printf("bestmove %d\n", result.best_move);
+    } else {
+        printf("bestmove none\n");
+    }
+    fflush(stdout); // SUPER IMPORTANT
 }
 
 // ─────────────────────────────────────────────
 //  Commands
 // ─────────────────────────────────────────────
 void UCI::cmd_uci() {
-    std::cout << "id name Connect4-Engine v1.0\n"
-              << "id author Connect4-Engine\n"
-              << "option name Hash type spin default 256 min 1 max 4096\n"
-              << "option name Threads type spin default 0 min 0 max 256\n"
-              << "uciok\n";
-    std::cout.flush();
+    printf("id name Connect4-Engine v1.0\n");
+    printf("id author Connect4-Engine\n");
+    printf("option name Hash type spin default 256 min 1 max 4096\n");
+    printf("option name Threads type spin default 0 min 0 max 256\n");
+    printf("uciok\n");
+    fflush(stdout);
 }
 
 void UCI::cmd_isready() {
-    std::cout << "readyok\n";
-    std::cout.flush();
+    printf("readyok\n");
+    fflush(stdout);
 }
 
 void UCI::cmd_ucinewgame() {
     engine_.reset();
     current_pos_ = Position{};
-    // std::cerr use kiya hai taaki output stdout me mix hoke JS parser ko disturb na kare
     std::cerr << "  [New game]\n";
     std::cerr.flush();
 }
@@ -263,17 +272,6 @@ void UCI::cmd_go(const std::string& line) {
     }
 }
 
-// STRICT UCI FORMAT (Outputs ONLY "bestmove X")
-void UCI::print_final_result(const SearchResult& result) {
-    if (result.depth == 0 && result.best_move < 0) return; // Search interrupted
-
-    std::cout << "bestmove ";
-    if (result.best_move >= 0) std::cout << result.best_move;
-    else                       std::cout << "none";
-    std::cout << "\n";
-    std::cout.flush();
-}
-
 void UCI::cmd_move(int col) {
     if (col < 0 || col >= COLS || !current_pos_.can_play(col)) return;
     if (is_win(current_pos_.current) || is_win(current_pos_.opponent())) return;
@@ -356,7 +354,7 @@ void UCI::process_command(const std::string& raw_line) {
 }
 
 // ─────────────────────────────────────────────
-//  Main CLI loop
+//  Main CLI loop (Ab sirf native builds ke liye, Wasm isko bypass karta hai)
 // ─────────────────────────────────────────────
 void UCI::run() {
     std::cerr << ANSI_BOLD << ANSI_CYAN
@@ -369,14 +367,12 @@ void UCI::run() {
 
     std::string line;
     while (!quit_flag_) {
-        // Sirf jab CLI mode me chal raha ho tab input prompt show hoga
         if (!searching_) {
             std::cerr << ANSI_GRAY << "> " << ANSI_RESET;
             std::cerr.flush();
         }
 
         if (!std::getline(std::cin, line)) break;
-
         process_command(line);
     }
 }
