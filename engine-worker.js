@@ -2,27 +2,36 @@
 // engine-worker.js
 //
 // Runs the Connect-4 UCI engine (compiled to WebAssembly via
-// Emscripten) off the main thread so an "infinite" search never
-// freezes the UI. Talks to the main thread only via postMessage.
+// Emscripten, single-threaded build) off the main thread so an
+// "infinite" search never freezes the UI. Talks to the main thread
+// only via postMessage.
+//
+// This build has NO std::thread / SharedArrayBuffer dependency at
+// all, so it needs no Cross-Origin-Opener-Policy / Cross-Origin-
+// Embedder-Policy headers and works on any static host. Instead of
+// the C++ side running "go infinite" on a background thread, JS
+// itself drives the search one depth at a time by calling the
+// exported step_search() in a loop (see driveSearch() below), with a
+// setTimeout(...,0) between calls so incoming 'stop'/'position'
+// messages always get a chance to run before the next depth starts.
 //
 // Expects connect4.js / connect4.wasm — the output of the `web`
-// Makefile target described in engine_patch/README.md — to sit
-// next to this file:
+// Makefile target in engine_patch/ — to sit next to this file:
 //
-//   emcc -std=c++17 -O3 -DNDEBUG -pthread \
-//        -s USE_PTHREADS=1 -s PTHREAD_POOL_SIZE=8 \
-//        -s EXPORTED_FUNCTIONS='["_engine_init","_send_uci_command","_main"]' \
+//   emcc -std=c++17 -O3 -DNDEBUG \
+//        -s EXPORTED_FUNCTIONS='["_engine_init","_send_uci_command","_step_search","_main"]' \
 //        -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' \
 //        -s MODULARIZE=1 -s EXPORT_NAME='Connect4Module' \
 //        -s ALLOW_MEMORY_GROWTH=1 -s ENVIRONMENT=worker \
 //        engine.cpp uci.cpp wasm_bridge.cpp -o connect4.js
 //
-// If connect4.js 404s (not built yet), we post 'engine_missing' and
-// app.js transparently switches to its in-browser mock engine so the
-// dashboard is still fully demoable.
+// If connect4.js 404s (not built yet) or fails to init, we post
+// 'engine_missing' and app.js transparently switches to its
+// in-browser mock engine so the dashboard is still fully demoable.
 // ============================================================
 
 let sendCommand = null;
+let stepFn = null;
 let ready = false;
 const pending = [];
 
@@ -78,12 +87,29 @@ function send(cmd) {
   }
 }
 
+// Drives an in-progress "go infinite" one depth at a time. Safe to
+// call more than once concurrently (e.g. right after a 'stop' from an
+// older position) — step_search() returns 0 as soon as UCI::searching_
+// is false, so any stale loop quietly ends itself on its next tick.
+function driveSearch() {
+  if (!stepFn) return;
+  let cont = false;
+  try {
+    cont = stepFn() === 1;
+  } catch (err) {
+    postMessage({ type: 'log', data: '[step error] ' + err });
+    return;
+  }
+  if (cont) setTimeout(driveSearch, 0);
+}
+
 function loadEngine() {
   self.Module = {
     print: handleEngineLine,
     printErr: (line) => postMessage({ type: 'log', data: '[stderr] ' + line }),
     onRuntimeInitialized() {
       sendCommand = self.Module.cwrap('send_uci_command', null, ['string']);
+      stepFn = self.Module.cwrap('step_search', 'number', []);
       self.Module.ccall('engine_init', null, [], []);
       ready = true;
       postMessage({ type: 'engine_ready' });
@@ -92,12 +118,9 @@ function loadEngine() {
   };
 
   // Catch every way this can go wrong: a synchronous throw (e.g. the
-  // file 404s), an async rejection (e.g. the module fails to
-  // instantiate — commonly because the page isn't cross-origin
-  // isolated, so SharedArrayBuffer is unavailable for the pthreads
-  // build), or an uncaught runtime error inside the Wasm glue code.
-  // Any of these now reports 'engine_missing' instead of leaving the
-  // main thread waiting forever with no signal at all.
+  // file 404s), an async rejection during module instantiation, or an
+  // uncaught runtime error — any of these now reports 'engine_missing'
+  // instead of leaving the main thread waiting with no signal at all.
   self.addEventListener('error', (e) => {
     postMessage({ type: 'engine_missing', data: 'worker error: ' + (e.message || e) });
   });
@@ -130,13 +153,11 @@ self.onmessage = (e) => {
       send('stop');
       send(movesStr.length ? `position startpos moves ${movesStr}` : 'position startpos');
       send('go infinite');
+      driveSearch();
       break;
     }
     case 'stop':
       send('stop');
-      break;
-    case 'setThreads':
-      send(`setoption name Threads value ${msg.threads}`);
       break;
     default:
       break;

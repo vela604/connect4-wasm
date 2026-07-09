@@ -19,12 +19,18 @@ all: release
 # WebAssembly build for the browser analysis board (see engine_patch/README.md
 # and wasm_bridge.cpp for details). Requires the Emscripten SDK (emcc) on PATH:
 #   https://emscripten.org/docs/getting_started/downloads.html
+#
+# Single-threaded on purpose: the "go infinite" search is driven one
+# depth at a time from JS via step_search() (see wasm_bridge.cpp /
+# engine.h's start_stepped_search()/step_once()), so no std::thread /
+# SharedArrayBuffer is needed at all — this runs on ANY static host,
+# no Cross-Origin-Opener-Policy/Cross-Origin-Embedder-Policy headers
+# required.
 EMCC       := emcc
 WEB_SRCS   := engine.cpp uci.cpp wasm_bridge.cpp
 WEB_OUTDIR := web
-EMFLAGS    := -std=c++17 -O3 -DNDEBUG -pthread \
-              -s USE_PTHREADS=1 -s PTHREAD_POOL_SIZE=8 \
-              -s EXPORTED_FUNCTIONS='["_engine_init","_send_uci_command","_main"]' \
+EMFLAGS    := -std=c++17 -O3 -DNDEBUG \
+              -s EXPORTED_FUNCTIONS='["_engine_init","_send_uci_command","_step_search","_main"]' \
               -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' \
               -s MODULARIZE=1 -s EXPORT_NAME='Connect4Module' \
               -s ALLOW_MEMORY_GROWTH=1 \
@@ -35,10 +41,7 @@ web: $(WEB_SRCS) $(HEADERS)
 	$(EMCC) $(EMFLAGS) $(WEB_SRCS) -o $(WEB_OUTDIR)/connect4.js
 	@echo "  Built: $(WEB_OUTDIR)/connect4.js + $(WEB_OUTDIR)/connect4.wasm"
 	@echo "  Copy both into the web app's directory (next to engine-worker.js)."
-	@echo "  IMPORTANT: serve with these two response headers (required for"
-	@echo "  SharedArrayBuffer/pthreads) or the worker will fail to start:"
-	@echo "    Cross-Origin-Opener-Policy: same-origin"
-	@echo "    Cross-Origin-Embedder-Policy: require-corp"
+	@echo "  Single-threaded build — works on any static host, no special headers needed."
 
 release: $(SRCS) $(HEADERS)
 	$(CXX) $(CXXFLAGS) -DNDEBUG $(SRCS) -o ./$(TARGET)

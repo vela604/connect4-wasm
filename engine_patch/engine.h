@@ -130,6 +130,21 @@ public:
     // Threads actually used by the most recent search() call.
     unsigned threads_used() const { return threads_used_.load(std::memory_order_relaxed); }
 
+    // ── Stepped (resumable) search — no std::thread required ──
+    // For environments with no real threading (e.g. a single-threaded
+    // WebAssembly build, which needs no SharedArrayBuffer/COOP/COEP
+    // headers at all). Instead of search() blocking until the whole
+    // "infinite" search finishes, the caller drives it one depth at a
+    // time: start_stepped_search() once, then step_once() repeatedly
+    // (e.g. from a JS setTimeout(...,0) loop) until it returns false.
+    // progress_cb_ still fires after every completed depth exactly as
+    // it does for search(), so callers don't need to change how they
+    // consume results.
+    void start_stepped_search(const Position& pos, int fixed_depth = 0);
+    bool step_once();                                   // returns false when done
+    bool stepped_search_active() const { return step_state_.active; }
+    const SearchResult& stepped_result() const { return step_state_.best_result; }
+
 private:
     // ── Negamax with Alpha-Beta ──────────────
     // root_moves = pos.moves of the position the CURRENT search call
@@ -180,6 +195,18 @@ private:
 
     unsigned              threads_override_{0};  // 0 = auto
     std::atomic<unsigned> threads_used_{1};
+
+    // State for the stepped/resumable search API (see start_stepped_search).
+    struct StepState {
+        Position       pos;
+        ThreadContext  ctx;
+        int            depth       = 0;
+        int            max_depth   = 0;
+        int            fixed_depth = 0;
+        SearchResult   best_result;
+        bool           active      = false;
+    };
+    StepState step_state_;
 
     static void update_killer(ThreadContext& ctx, int col, int depth);
     static void update_history(ThreadContext& ctx, int col, int depth);

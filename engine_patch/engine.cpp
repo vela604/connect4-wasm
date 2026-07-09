@@ -446,6 +446,76 @@ SearchResult Engine::iterative_deepen(const Position& pos, int max_depth, int fi
 }
 
 // ─────────────────────────────────────────────
+//  Stepped (resumable) search — see engine.h
+//
+//  Same iterative-deepening logic as iterative_deepen()/search(),
+//  just split into two calls so a caller with no real threading
+//  (single-threaded Wasm) can drive it one depth at a time instead
+//  of it blocking until the whole search is done.
+// ─────────────────────────────────────────────
+void Engine::start_stepped_search(const Position& pos, int fixed_depth) {
+    stop_flag_ = false;
+    stats_.reset();
+
+    step_state_ = StepState{};
+    step_state_.pos         = pos;
+    step_state_.fixed_depth = fixed_depth;
+    step_state_.max_depth   = (fixed_depth > 0) ? fixed_depth : CELLS;
+    step_state_.depth       = 1;
+    step_state_.ctx.clear();
+    step_state_.best_result.best_move = -1;
+    step_state_.best_result.score     = 0;
+    step_state_.best_result.depth     = 0;
+
+    threads_used_.store(1, std::memory_order_relaxed);
+
+    if (is_win(pos.current) || is_win(pos.opponent()) || pos.is_full()) {
+        step_state_.active = false;
+        return;
+    }
+    step_state_.active = true;
+}
+
+bool Engine::step_once() {
+    if (!step_state_.active) return false;
+    if (stop_flag_ || step_state_.depth > step_state_.max_depth) {
+        step_state_.active = false;
+        return false;
+    }
+
+    stats_.current_depth = step_state_.depth;
+
+    std::vector<int> pv;
+    int score = negamax(step_state_.pos, step_state_.depth, SCORE_LOSS - 1, SCORE_WIN + 1,
+                         pv, step_state_.ctx, step_state_.pos.moves);
+
+    if (stop_flag_) {
+        step_state_.active = false;
+        return false;
+    }
+
+    step_state_.best_result.depth     = step_state_.depth;
+    step_state_.best_result.score     = score;
+    step_state_.best_result.is_exact  = true;
+    step_state_.best_result.pv        = pv;
+    step_state_.best_result.best_move = pv.empty() ? -1 : pv[0];
+    step_state_.best_result.mate_in   = is_mate_score(score)
+        ? moves_to_mate(score, step_state_.pos.moves) : 0;
+
+    if (progress_cb_) progress_cb_(step_state_.best_result, stats_);
+
+    bool done = false;
+    if (is_mate_score(score) && step_state_.fixed_depth == 0) done = true;
+    if (step_state_.fixed_depth > 0 && step_state_.depth >= step_state_.fixed_depth) done = true;
+    if (step_state_.depth >= step_state_.max_depth) done = true;
+
+    ++step_state_.depth;
+
+    if (done) { step_state_.active = false; return false; }
+    return true;
+}
+
+// ─────────────────────────────────────────────
 //  Main search entry
 //
 //  Automatically scales across however many CPU

@@ -24,6 +24,12 @@ public:
     // at a time, from JS — without needing an interactive stdin loop.
     void execute(const std::string& line);
 
+    // Advance a web-mode ("go infinite") search by one depth. Only
+    // meaningful when web_mode==true; used by the single-threaded Wasm
+    // bridge's step_search() export. Returns false once the search is
+    // done (mate found, depth limit hit, or stop() was called).
+    bool step();
+
 private:
     void cmd_uci();
     void cmd_isready();

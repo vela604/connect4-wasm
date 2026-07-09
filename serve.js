@@ -1,6 +1,6 @@
-// Minimal static file server with the two response headers browsers
-// require before they'll allow SharedArrayBuffer — which the pthreads
-// Wasm build (engine_patch/) needs for its Lazy-SMP search threads.
+// Minimal static file server for local testing.
+// (The Wasm build is single-threaded, so no special COOP/COEP headers
+// are required — this server is just a plain static file server.)
 //
 // Usage:  node serve.js [port]      (default port 8080)
 // Then open http://localhost:8080
@@ -29,8 +29,6 @@ http.createServer((req, res) => {
     }
     res.writeHead(200, {
       'Content-Type': MIME[path.extname(filePath)] || 'application/octet-stream',
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
     });
     res.end(data);
   });

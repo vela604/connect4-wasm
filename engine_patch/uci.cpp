@@ -354,6 +354,23 @@ void UCI::cmd_go(const std::string& line) {
 
     bool unlimited = (line.find("infinite") != std::string::npos || fixed_depth == 0);
 
+    Position pos_copy = current_pos_;
+    go_start_ = std::chrono::steady_clock::now();
+    engine_.reset();
+    current_pos_ = pos_copy;
+
+    if (web_mode_) {
+        // No std::thread at all here — the Wasm build this feeds is
+        // single-threaded (no SharedArrayBuffer / COOP+COEP headers
+        // needed on any host). JS drives progress by calling the
+        // step_search() bridge function repeatedly; see step().
+        engine_.set_threads(1);
+        engine_.start_stepped_search(pos_copy, fixed_depth);
+        searching_ = engine_.stepped_search_active();
+        if (!searching_) print_final_result(SearchResult{}); // game already over
+        return;
+    }
+
     if (!web_mode_) {
         if (unlimited) {
             std::cout << ANSI_CYAN << ANSI_BOLD
@@ -371,13 +388,7 @@ void UCI::cmd_go(const std::string& line) {
         print_board(current_pos_);
     }
 
-    Position pos_copy = current_pos_;
     searching_ = true;
-    go_start_ = std::chrono::steady_clock::now();
-
-    // Reset engine (clears stop flag from previous search)
-    engine_.reset();
-    current_pos_ = pos_copy;
 
     search_thread_ = std::thread([this, pos_copy, fixed_depth]() {
         SearchResult result = engine_.search(pos_copy, fixed_depth);
@@ -394,6 +405,21 @@ void UCI::cmd_go(const std::string& line) {
         search_thread_.join();
     }
     // unlimited: returns immediately, search runs in background
+}
+
+bool UCI::step() {
+    // Called repeatedly by the Wasm bridge (step_search()) from a JS
+    // loop — advances the current web-mode search by exactly one ply
+    // depth and returns whether there's more work to do. No threads
+    // involved; each call is a plain synchronous function call.
+    if (!searching_) return false;
+
+    bool cont = engine_.step_once();
+    if (!cont) {
+        print_final_result(engine_.stepped_result());
+        searching_ = false;
+    }
+    return cont;
 }
 
 void UCI::print_final_result(const SearchResult& result) {
