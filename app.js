@@ -34,26 +34,24 @@ const el = {
   boardGrid: document.getElementById('boardGrid'),
   columnOverlay: document.getElementById('columnOverlay'),
   boardGridWrap: document.querySelector('.board-grid-wrap'),
+  bestMoveArrow: document.getElementById('bestMoveArrow'),
   resultBanner: document.getElementById('resultBanner'),
   chipP1: document.getElementById('chipP1'),
   chipP2: document.getElementById('chipP2'),
   evalFill: document.getElementById('evalFill'),
   evalLabel: document.getElementById('evalLabel'),
-  evalDepthCaption: document.getElementById('evalDepthCaption'),
-  statDepth: document.getElementById('statDepth'),
-  statScore: document.getElementById('statScore'),
-  statNodes: document.getElementById('statNodes'),
-  statNps: document.getElementById('statNps'),
-  depthBar: document.getElementById('depthBar'),
-  pvLine: document.getElementById('pvLine'),
+  depthBadgeValue: document.getElementById('depthBadgeValue'),
+  evalStripScore: document.getElementById('evalStripScore'),
+  evalStripPv: document.getElementById('evalStripPv'),
   historyList: document.getElementById('historyList'),
-  logBox: document.getElementById('logBox'),
+  logBox: document.getElementById('logBox'), // optional; may not exist in this layout
   statusLed: document.getElementById('statusLed'),
   statusText: document.getElementById('statusText'),
   mockBannerWrap: document.getElementById('mockBannerWrap'),
   engineToggle: document.getElementById('engineToggle'),
   btnFlip: document.getElementById('btnFlip'),
-  btnUndo: document.getElementById('btnUndo'),
+  btnBack: document.getElementById('btnBack'),
+  btnForward: document.getElementById('btnForward'),
   btnReset: document.getElementById('btnReset'),
 };
 
@@ -119,6 +117,8 @@ function render() {
   renderChips(slice.length, gameOver);
   renderHistory();
   hideGhost();
+  el.btnBack.disabled = viewPly === 0;
+  el.btnForward.disabled = viewPly === moves.length;
 }
 
 function renderBoard(board, lastPos) {
@@ -249,13 +249,12 @@ function goToPly(ply) {
   requestEngineAnalysis();
 }
 
-function undoMove() {
-  if (moves.length === 0) return;
-  moves.pop();
-  viewPly = moves.length;
-  render();
-  requestEngineAnalysis();
-}
+// Non-destructive step navigation (like chess.com's back/forward
+// arrows). Unlike the old "Take Back" button, this never deletes
+// anything from `moves` — it only moves the view pointer, so you can
+// always step forward again afterwards.
+function stepBack() { goToPly(viewPly - 1); }
+function stepForward() { goToPly(viewPly + 1); }
 
 function resetBoard() {
   moves = [];
@@ -304,12 +303,10 @@ function requestEngineAnalysis() {
 }
 
 function clearLiveStats() {
-  el.statDepth.textContent = '–';
-  el.statScore.textContent = '–';
-  el.statNodes.textContent = '–';
-  el.statNps.textContent = '–';
-  el.depthBar.style.width = '0%';
-  el.pvLine.innerHTML = '';
+  el.depthBadgeValue.textContent = '–';
+  el.evalStripScore.textContent = '–';
+  el.evalStripPv.innerHTML = '<span class="pv-placeholder">Waiting for engine…</span>';
+  hideBestMoveArrow();
 }
 
 function onSearchInfo(data, forPly) {
@@ -323,22 +320,34 @@ function onSearchInfo(data, forPly) {
 
   updateEvalUI(scoreP1, mateP1, data.depth);
 
-  el.statDepth.textContent = data.depth;
-  el.statScore.textContent = formatScoreLabel(data.scoreCp, data.mateIn); // engine's own (mover) perspective
-  el.statNodes.textContent = data.nodes.toLocaleString();
-  el.statNps.textContent = data.nps.toLocaleString();
-  el.depthBar.style.width = `${Math.min(100, (data.depth / 42) * 100)}%`;
-  el.evalDepthCaption.textContent = data.depth;
+  el.depthBadgeValue.textContent = data.depth;
+  el.evalStripScore.textContent = formatScoreLabel(data.scoreCp, data.mateIn);
+  el.evalStripScore.style.color = data.scoreCp >= 0 || data.mateIn > 0 ? 'var(--win)' : 'var(--loss)';
 
-  el.pvLine.innerHTML = '';
+  el.evalStripPv.innerHTML = '';
   data.pv.forEach((col, i) => {
-    const chip = document.createElement('div');
-    chip.className = 'pv-chip';
-    chip.textContent = `${i + 1}. col ${col}`;
+    const chip = document.createElement('span');
+    chip.className = 'pv-move';
+    chip.textContent = `${i + 1}.${col}`;
     chip.title = 'Play out this predicted line';
     chip.addEventListener('click', () => playPvLine(data.pv, i));
-    el.pvLine.appendChild(chip);
+    el.evalStripPv.appendChild(chip);
   });
+
+  showBestMoveArrow(data.pv[0]);
+}
+
+function showBestMoveArrow(col) {
+  if (col === undefined || col === null) { hideBestMoveArrow(); return; }
+  const displayCol = flipped ? (6 - col) : col;
+  const cw = 100 / COLS;
+  el.bestMoveArrow.style.left = `${displayCol * cw}%`;
+  el.bestMoveArrow.style.width = `${cw}%`;
+  el.bestMoveArrow.classList.add('show');
+}
+
+function hideBestMoveArrow() {
+  el.bestMoveArrow.classList.remove('show');
 }
 
 function formatScoreLabel(scoreCp, mateIn) {
@@ -369,6 +378,7 @@ function setStatus(state, text) {
 }
 
 function appendLog(text) {
+  if (!el.logBox) { console.log('[connect4]', text); return; }
   const line = document.createElement('div');
   line.textContent = text;
   el.logBox.prepend(line);
@@ -478,7 +488,8 @@ function startMock(slice) {
 // ============================================================
 
 el.btnFlip.addEventListener('click', flipBoard);
-el.btnUndo.addEventListener('click', undoMove);
+el.btnBack.addEventListener('click', stepBack);
+el.btnForward.addEventListener('click', stepForward);
 el.btnReset.addEventListener('click', resetBoard);
 el.engineToggle.addEventListener('click', () => {
   engineOn = !engineOn;

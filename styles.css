@@ -90,6 +90,12 @@ html, body {
   border-radius: 999px;
   background: var(--panel-alt);
 }
+.status-mini {
+  display: flex; align-items: center; gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-faint);
+}
 .status-led {
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--text-faint);
@@ -99,6 +105,71 @@ html, body {
 .status-led.busy { background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulse 1.1s ease-in-out infinite; }
 .status-led.off  { background: var(--loss); box-shadow: 0 0 8px var(--loss); }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+.depth-badge {
+  margin-left: auto;
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: conic-gradient(var(--accent) 0deg, var(--border) 0deg);
+  border: 1px solid var(--border);
+  position: relative;
+}
+.depth-badge::before {
+  content: "";
+  position: absolute; inset: 3px;
+  border-radius: 50%;
+  background: var(--panel);
+}
+.depth-badge span {
+  position: relative;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--accent);
+}
+
+/* ---------- eval strip (chess.com-style thin bar) ---------- */
+.eval-strip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 22px;
+  background: #0d1420;
+  border-bottom: 1px solid var(--border-soft);
+  max-width: 1440px;
+  margin: 0 auto;
+}
+.eval-strip-score {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text);
+  flex-shrink: 0;
+  min-width: 46px;
+}
+.eval-strip-pv {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-dim);
+  scrollbar-width: none;
+}
+.eval-strip-pv::-webkit-scrollbar { display: none; }
+.eval-strip-pv .pv-placeholder { color: var(--text-faint); }
+.eval-strip-pv .pv-move {
+  cursor: pointer;
+  padding: 2px 7px;
+  border-radius: 6px;
+  transition: background .15s, color .15s;
+}
+.eval-strip-pv .pv-move:hover { background: var(--panel-raise); color: var(--accent); }
+.eval-strip-pv .pv-move:first-child { color: var(--accent); font-weight: 600; }
 
 /* ---------- layout shell ---------- */
 .app-shell {
@@ -262,6 +333,31 @@ html, body {
   pointer-events: none;
 }
 
+.best-move-arrow {
+  position: absolute;
+  top: -22px;
+  width: 100%;
+  height: 22px;
+  pointer-events: none;
+  display: none;
+}
+.best-move-arrow.show { display: block; }
+.best-move-arrow::after {
+  content: "▼";
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-size: 18px;
+  line-height: 1;
+  color: var(--accent);
+  text-shadow: 0 0 10px var(--accent);
+  animation: arrow-bounce 1s ease-in-out infinite;
+}
+@keyframes arrow-bounce {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50%      { transform: translateX(-50%) translateY(4px); }
+}
+
 .column-overlay {
   position: absolute; inset: 0;
   display: grid;
@@ -389,6 +485,8 @@ html, body {
 .btn:active { transform: scale(.97); }
 .btn.full { grid-column: 1 / -1; }
 .btn.danger:hover { border-color: var(--loss); color: var(--loss); }
+.btn:disabled { opacity: .35; cursor: not-allowed; }
+.btn:disabled:hover { border-color: var(--border); background: var(--panel-raise); }
 
 .toggle-row {
   display: flex; align-items: center; justify-content: space-between;

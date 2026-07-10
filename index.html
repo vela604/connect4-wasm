@@ -13,11 +13,16 @@
     <span class="logo-dot"></span>
     Connect-4 Analysis Board
   </div>
-  <div class="status" id="engineStatus">
-    <span class="status-led off" id="statusLed"></span>
-    <span id="statusText">Connecting to engine…</span>
+  <div class="depth-badge" id="depthBadge" title="Search depth">
+    <span id="depthBadgeValue">–</span>
   </div>
 </header>
+
+<!-- Chess.com-style thin evaluation + PV strip -->
+<div class="eval-strip" id="evalStrip">
+  <div class="eval-strip-score" id="evalStripScore">+0.0</div>
+  <div class="eval-strip-pv" id="evalStripPv"><span class="pv-placeholder">Waiting for engine…</span></div>
+</div>
 
 <main class="app-shell">
 
@@ -28,7 +33,6 @@
       <div class="eval-zero-line"></div>
       <div class="eval-label" id="evalLabel">0.0</div>
     </div>
-    <div class="eval-caption">DEPTH<br><span id="evalDepthCaption">–</span></div>
   </section>
 
   <!-- CENTER: board -->
@@ -36,6 +40,10 @@
     <div class="board-toprow">
       <div class="player-chip p1" id="chipP1">
         <span class="swatch"></span> Player 1 <span class="tag">(you)</span>
+      </div>
+      <div class="status-mini" id="engineStatus">
+        <span class="status-led off" id="statusLed"></span>
+        <span id="statusText">Connecting…</span>
       </div>
       <div class="player-chip p2" id="chipP2">
         <span class="swatch"></span> Player 2
@@ -47,6 +55,7 @@
     <div class="board-casing">
       <div class="board-grid-wrap">
         <div class="board-grid" id="boardGrid"></div>
+        <div class="best-move-arrow" id="bestMoveArrow"></div>
         <div class="column-overlay" id="columnOverlay"></div>
       </div>
     </div>
@@ -56,30 +65,18 @@
       <span>·</span>
       <span>Hover to preview</span>
     </div>
-  </section>
 
-  <!-- RIGHT: analysis sidebar -->
-  <aside class="sidebar">
-
-    <div class="panel card" id="mockBannerWrap" style="display:none;">
+    <div class="panel card mock-card" id="mockBannerWrap" style="display:none;">
       <div class="mock-banner show">
         connect4.js not found — running a lightweight mock engine so you can
         see the dashboard live. Build the real Wasm module (see README) and
         this switches over automatically.
       </div>
     </div>
+  </section>
 
-    <div class="panel card">
-      <div class="card-title">Engine Analytics</div>
-      <div class="stat-grid">
-        <div class="stat"><span class="k">DEPTH</span><span class="v" id="statDepth">–</span></div>
-        <div class="stat"><span class="k">SCORE</span><span class="v accent" id="statScore">–</span></div>
-        <div class="stat"><span class="k">NODES</span><span class="v" id="statNodes">–</span></div>
-        <div class="stat"><span class="k">NPS</span><span class="v" id="statNps">–</span></div>
-      </div>
-      <div class="depth-track"><div id="depthBar"></div></div>
-      <div class="pv-line" id="pvLine"></div>
-    </div>
+  <!-- RIGHT: move history + controls -->
+  <aside class="sidebar">
 
     <div class="panel card">
       <div class="card-title">Move History</div>
@@ -91,19 +88,15 @@
     <div class="panel card">
       <div class="card-title">Controls</div>
       <div class="controls-grid">
+        <button class="btn" id="btnBack" title="Previous move">◀ Back</button>
+        <button class="btn" id="btnForward" title="Next move">Forward ▶</button>
         <button class="btn" id="btnFlip">⇅ Flip Board</button>
-        <button class="btn" id="btnUndo">↶ Take Back</button>
-        <button class="btn full danger" id="btnReset">⟲ Clear / Reset</button>
+        <button class="btn danger" id="btnReset">⟲ Reset</button>
       </div>
       <div class="toggle-row">
         <span class="toggle-label">Engine Thinking</span>
         <div class="switch on" id="engineToggle"></div>
       </div>
-    </div>
-
-    <div class="panel card">
-      <div class="card-title">Engine Log</div>
-      <div class="log-box" id="logBox"></div>
     </div>
 
   </aside>
