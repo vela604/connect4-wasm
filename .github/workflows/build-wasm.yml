@@ -40,5 +40,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add connect4.js connect4.wasm
-          git diff --staged --quiet && echo "No changes" || git commit -m "Rebuild Wasm engine [skip ci]"
+          git diff --staged --quiet && echo "No changes" || git commit -m "Rebuild Wasm engine (single-threaded, no headers needed)"
           git push
