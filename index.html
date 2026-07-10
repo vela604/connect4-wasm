@@ -18,25 +18,9 @@
   </div>
 </header>
 
-<!-- Chess.com-style thin evaluation + PV strip -->
-<div class="eval-strip" id="evalStrip">
-  <div class="eval-strip-score" id="evalStripScore">+0.0</div>
-  <div class="eval-strip-pv" id="evalStripPv"><span class="pv-placeholder">Waiting for engine…</span></div>
-</div>
-
 <main class="app-shell">
 
-  <!-- LEFT: evaluation bar -->
-  <section class="eval-col" aria-label="Evaluation">
-    <div class="eval-bar-shell" id="evalBarShell">
-      <div class="eval-fill" id="evalFill"></div>
-      <div class="eval-zero-line"></div>
-      <div class="eval-label" id="evalLabel">0.0</div>
-    </div>
-  </section>
-
-  <!-- CENTER: board -->
-  <section class="board-col">
+  <div class="main-col">
     <div class="board-toprow">
       <div class="player-chip p1" id="chipP1">
         <span class="swatch"></span> Player 1 <span class="tag">(you)</span>
@@ -50,13 +34,28 @@
       </div>
     </div>
 
+    <!-- Chess.com-style thin evaluation + PV strip -->
+    <div class="eval-strip" id="evalStrip">
+      <div class="eval-strip-score" id="evalStripScore">+0.0</div>
+      <div class="eval-strip-pv" id="evalStripPv"><span class="pv-placeholder">Waiting for engine…</span></div>
+    </div>
+
     <div id="resultBanner" class="result-banner"></div>
 
-    <div class="board-casing">
-      <div class="board-grid-wrap">
-        <div class="board-grid" id="boardGrid"></div>
-        <div class="best-move-arrow" id="bestMoveArrow"></div>
-        <div class="column-overlay" id="columnOverlay"></div>
+    <!-- Eval bar + board sit side-by-side as one unit at every screen size -->
+    <div class="board-row">
+      <div class="eval-bar-shell" id="evalBarShell" aria-label="Evaluation">
+        <div class="eval-fill" id="evalFill"></div>
+        <div class="eval-zero-line"></div>
+        <div class="eval-label" id="evalLabel">0.0</div>
+      </div>
+
+      <div class="board-casing">
+        <div class="board-grid-wrap">
+          <div class="board-grid" id="boardGrid"></div>
+          <div class="best-move-arrow" id="bestMoveArrow"></div>
+          <div class="column-overlay" id="columnOverlay"></div>
+        </div>
       </div>
     </div>
 
@@ -73,7 +72,7 @@
         this switches over automatically.
       </div>
     </div>
-  </section>
+  </div>
 
   <!-- RIGHT: move history + controls -->
   <aside class="sidebar">
@@ -90,7 +89,7 @@
       <div class="controls-grid">
         <button class="btn" id="btnBack" title="Previous move">◀ Back</button>
         <button class="btn" id="btnForward" title="Next move">Forward ▶</button>
-        <button class="btn" id="btnFlip">⇅ Flip Board</button>
+        <button class="btn" id="btnFlip">⇅ Flip</button>
         <button class="btn danger" id="btnReset">⟲ Reset</button>
       </div>
       <div class="toggle-row">

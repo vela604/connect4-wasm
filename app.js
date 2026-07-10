@@ -130,6 +130,8 @@ function renderBoard(board, lastPos) {
     for (const realCol of colOrder) {
       const cell = document.createElement('div');
       cell.className = 'cell';
+      cell.dataset.col = String(realCol);
+      cell.dataset.displayRow = String(displayRow);
       const v = board[realRow][realCol];
       if (v) {
         const piece = document.createElement('div');
@@ -339,10 +341,13 @@ function onSearchInfo(data, forPly) {
 
 function showBestMoveArrow(col) {
   if (col === undefined || col === null) { hideBestMoveArrow(); return; }
-  const displayCol = flipped ? (6 - col) : col;
-  const cw = 100 / COLS;
-  el.bestMoveArrow.style.left = `${displayCol * cw}%`;
-  el.bestMoveArrow.style.width = `${cw}%`;
+  const cell = el.boardGrid.querySelector(`.cell[data-col="${col}"][data-display-row="0"]`);
+  if (!cell) { hideBestMoveArrow(); return; }
+  const cellRect = cell.getBoundingClientRect();
+  const wrapRect = el.boardGridWrap.getBoundingClientRect();
+  const centerPx = (cellRect.left - wrapRect.left) + cellRect.width / 2;
+  el.bestMoveArrow.style.left = `${centerPx}px`;
+  el.bestMoveArrow.style.width = '0px';
   el.bestMoveArrow.classList.add('show');
 }
 
